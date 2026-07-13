@@ -266,6 +266,7 @@
       </div>
       <div id="roomInfo">Code de la partie : <span id="roomCode"></span><br><span style="opacity:.7">Donne ce code a ton pote.</span></div>
       <button class="btn" id="playBtn" style="display:none">▶ ENTRER DANS LE MONDE</button>
+      <button class="btn red" id="practiceBtn" style="display:none">🎯 ENTRAÎNEMENT CACHETTE</button>
       <button class="btn red" id="hideSeekBtn" style="display:none">🔫 LANCER LE CACHE-CACHE</button>
       <button class="btn ice" id="chatBtn" style="display:none">🧊 LANCER LE CHAT GLACÉ</button>
       <div class="btnRow">
@@ -1343,6 +1344,18 @@ function hostHandleLeave(id) {
   }
 }
 
+// Mode entraînement solo : on est caché (mini-taille, peinture, leurre,
+// compte a rebours...) face a un chasseur fictif, pour tester ses
+// camouflages tranquillement.
+function startPractice() {
+  net.isHost = true; // on est son propre "hôte" pour piloter les phases
+  playerNames.set('bot-practice', 'Bot (entraînement)');
+  startHideSeek('bot-practice', [myId()], 'classic');
+  clearGameTimers();
+  game.timers.push(setTimeout(hostStartHunting, HIDE_SECS * 1000));
+  showNotif('🎯 Entraînement : cache-toi, peins-toi (P), pose un leurre (F) !', 4000);
+}
+
 function hostMarkReady(id) {
   if (game.phase !== 'hiding' || !game.alive.has(id)) return;
   game.readySet.add(id);
@@ -1779,6 +1792,8 @@ document.getElementById('resetBtn').onclick = () => {
 
 function showPlay() {
   playBtn.style.display = 'block';
+  // L'entraînement n'est proposé qu'en solo (pas en partie en ligne)
+  document.getElementById('practiceBtn').style.display = net.peer ? 'none' : 'block';
   document.getElementById('soloBtn').style.display = 'none';
   document.getElementById('hostBtn').style.display = 'none';
   document.getElementById('joinBtn').style.display = 'none';
@@ -1839,6 +1854,11 @@ document.getElementById('chatBtn').onclick = () => {
 };
 
 playBtn.onclick = () => enterWorld();
+
+document.getElementById('practiceBtn').onclick = () => {
+  startPractice();
+  enterWorld();
+};
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
   overlay.style.display = locked ? 'none' : 'flex';
