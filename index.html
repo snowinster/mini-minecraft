@@ -244,7 +244,7 @@
       <div class="rules">
         <div class="rItem"><div class="rIcon">🎮</div><div><b>Contrôles</b> : ZQSD / WASD pour bouger, <kbd>MAJ</kbd> sprint, <kbd>ESPACE</kbd> sauter. Clic gauche : casser / tirer. Clic droit : poser un bloc. Toutes les touches sont modifiables dans les Réglages.</div></div>
         <div class="rItem"><div class="rIcon">🙈</div><div><b>Cache-cache</b> : un chasseur est tiré au sort. Les cachés ont 60 s pour se planquer (<kbd>R</kbd> = prêt en avance), puis 3 min de chasse pendant que la nuit tombe.</div></div>
-        <div class="rItem"><div class="rIcon">❤️</div><div><b>Survie</b> : les cachés ont 2 vies mais ne peuvent pas toucher aux blocs — leur arme, c'est le camouflage. Le chasseur a 5 balles par chargeur, rechargement 2,5 s.</div></div>
+        <div class="rItem"><div class="rIcon">❤️</div><div><b>Survie</b> : les cachés sont <b>3x plus petits</b>, ont 2 vies mais ne peuvent pas toucher aux blocs — leurs armes : la taille et le camouflage. Le chasseur a 5 balles par chargeur, rechargement 2,5 s.</div></div>
         <div class="rItem"><div class="rIcon">🎭</div><div><b>Leurre</b> : <kbd>F</kbd> pose un faux joueur (1 par partie) pour piéger le chasseur.</div></div>
         <div class="rItem"><div class="rIcon">🎨</div><div><b>Peinture camouflage</b> : <kbd>C</kbd> passe en vue 3e personne. Là, clic droit sur un bloc = pipette (tu prends sa couleur exacte), clic gauche sur ton perso = tu le peins pixel par pixel. Fonds-toi dans le décor !</div></div>
         <div class="rItem"><div class="rIcon">⭐</div><div><b>Points</b> : reste a moins de 20 blocs du chasseur sans te faire voir pour gagner des points de discrétion.</div></div>
@@ -808,6 +808,11 @@ const ammoEl = document.getElementById('ammo');
 function myId() { return net.peer ? net.peer.id : 'local'; }
 function isHunter() { return game.mode === 'hide' && game.hunters.has(myId()); }
 
+// Les cachés sont 3x plus petits pendant le cache-cache (plus facile de
+// se cacher). Le chasseur garde sa taille normale.
+const HIDER_SCALE = 1 / 3;
+function myScale() { return (game.mode === 'hide' && !isHunter()) ? HIDER_SCALE : 1; }
+
 let thirdPerson = false;
 // En 3e personne, la souris devient un curseur libre (pinceau) et la
 // caméra orbite autour du perso avec les flèches.
@@ -845,20 +850,26 @@ function cursorNDC() {
   return { x: (cursorX / innerWidth) * 2 - 1, y: -(cursorY / innerHeight) * 2 + 1 };
 }
 
-// Clic gauche en 3e personne : peint le pixel du perso sous le curseur
-function paintSelf() {
+// Peint le pixel du perso sous le curseur. On peut maintenir le clic
+// et glisser pour peindre en continu (quiet = pas de notif pendant le glissé).
+let paintDragging = false;
+function paintSelf(quiet) {
   paintRaycaster.setFromCamera(cursorNDC(), camera);
   const hits = paintRaycaster.intersectObject(selfMesh, true);
   const hit = hits.find(h => h.object.userData.paint && h.uv);
-  if (!hit) { showNotif('Place le curseur sur ton personnage pour le peindre', 1200); return; }
+  if (!hit) {
+    if (!quiet) showNotif('Place le curseur sur ton personnage pour le peindre', 1200);
+    return;
+  }
   const p = hit.object.userData.paint;
   const px = Math.min(SKIN_RES - 1, Math.floor(hit.uv.x * SKIN_RES));
   const py = Math.min(SKIN_RES - 1, Math.floor((1 - hit.uv.y) * SKIN_RES));
+  const name = hit.object.userData.partName;
+  if (mySkin[name][py * SKIN_RES + px] === paintColor) return; // déjà peint
   p.ctx.fillStyle = cssColor(paintColor);
   p.ctx.fillRect(px, py, 1, 1);
   p.tex.needsUpdate = true;
-  mySkin[hit.object.userData.partName][py * SKIN_RES + px] = paintColor;
-  sfx.place();
+  mySkin[name][py * SKIN_RES + px] = paintColor;
   queueSkinSync();
 }
 
@@ -924,8 +935,10 @@ function spawnDecoy(id, p, color, name, yaw, skin) {
   if (name) group.add(makeNameSprite(name));
   group.position.set(p[0], p[1], p[2]);
   group.rotation.y = yaw || 0;
+  const scale = game.mode === 'hide' ? HIDER_SCALE : 1; // leurre a la taille des cachés
+  group.scale.setScalar(scale);
   scene.add(group);
-  decoys.set(id, { group, pos: { x: p[0], y: p[1], z: p[2] } });
+  decoys.set(id, { group, pos: { x: p[0], y: p[1], z: p[2] }, scale });
 }
 function popDecoy(id) {
   const d = decoys.get(id);
@@ -1037,6 +1050,11 @@ function endHideSeek(who, scores) {
   hud.style.display = 'flex';
   vignetteEl.style.opacity = 0;
   sfx.win();
+
+  // Au retour a la taille normale, on ne doit pas rester coincé dans un
+  // recoin où seul le mini-perso passait.
+  let guard = 0;
+  while (collide(player.pos) && guard++ < 30) player.pos.y += 0.5;
 
   const hunterWinTxt = game.convertMode ? '🧊 TOUT LE MONDE A ÉTÉ ATTRAPÉ !' : '🔫 LE CHASSEUR A GAGNÉ !';
   let html = `<div class="win">${who === 'hunter' ? hunterWinTxt : '🌿 LES CACHÉS ONT GAGNÉ !'}</div>`;
@@ -1223,14 +1241,25 @@ function shoot() {
   const blockHit = raycastVoxel(GUN_RANGE);
   const blockDist = blockHit ? blockHit.dist : Infinity;
 
-  // Cibles possibles : joueurs vivants + leurres
+  // Cibles possibles : joueurs vivants + leurres (les cachés sont
+  // rétrécis : centre plus bas et hitbox plus petite)
   const candidates = [];
   for (const [id, r] of remotePlayers) {
     if (!game.alive.has(id)) continue;
-    candidates.push({ kind: 'player', id, center: new THREE.Vector3(r.target.x, r.target.y + 0.9, r.target.z) });
+    const s = game.hunters.has(id) ? 1 : HIDER_SCALE;
+    candidates.push({
+      kind: 'player', id,
+      center: new THREE.Vector3(r.target.x, r.target.y + 0.9 * s, r.target.z),
+      radius: s < 1 ? 0.35 : GUN_HIT_RADIUS,
+    });
   }
   for (const [id, dcy] of decoys) {
-    candidates.push({ kind: 'decoy', id, center: new THREE.Vector3(dcy.pos.x, dcy.pos.y + 0.9, dcy.pos.z) });
+    const s = dcy.scale || 1;
+    candidates.push({
+      kind: 'decoy', id,
+      center: new THREE.Vector3(dcy.pos.x, dcy.pos.y + 0.9 * s, dcy.pos.z),
+      radius: s < 1 ? 0.35 : GUN_HIT_RADIUS,
+    });
   }
 
   let best = null, bestT = Infinity;
@@ -1238,7 +1267,7 @@ function shoot() {
     const t = c.center.clone().sub(origin).dot(dir);
     if (t < 0 || t > GUN_RANGE) continue;
     const closest = origin.clone().add(dir.clone().multiplyScalar(t));
-    if (closest.distanceTo(c.center) < GUN_HIT_RADIUS && t < blockDist && t < bestT) {
+    if (closest.distanceTo(c.center) < c.radius && t < blockDist && t < bestT) {
       best = c; bestT = t;
     }
   }
@@ -1420,8 +1449,9 @@ function isSolid(x, y, z) {
   return world.has(key(Math.floor(x), Math.floor(y), Math.floor(z)));
 }
 function collide(pos) {
-  const r = 0.3;
-  for (const dx of [-r, r]) for (const dz of [-r, r]) for (const dy of [0, 0.9, PLAYER_H - 0.05]) {
+  const s = myScale();
+  const r = 0.3 * s;
+  for (const dx of [-r, r]) for (const dz of [-r, r]) for (const dy of [0, 0.9 * s, (PLAYER_H - 0.05) * s]) {
     if (isSolid(pos.x + dx, pos.y + dy, pos.z + dz)) return true;
   }
   return false;
@@ -1605,6 +1635,7 @@ document.addEventListener('mousemove', e => {
     cursorY = Math.max(0, Math.min(innerHeight, cursorY + e.movementY));
     paintCursorEl.style.left = cursorX + 'px';
     paintCursorEl.style.top = cursorY + 'px';
+    if (paintDragging) paintSelf(true); // clic maintenu = on peint en glissant
     return;
   }
   const sens = 0.0025 * settings.sens;
@@ -1651,7 +1682,8 @@ document.addEventListener('wheel', e => {
 // En 3e personne, on vise depuis la tête du joueur (pas depuis la caméra
 // qui est derrière lui), sinon la portée serait faussée.
 function headPos() {
-  return new THREE.Vector3(player.pos.x, player.pos.y + PLAYER_H - 0.15, player.pos.z);
+  const s = myScale();
+  return new THREE.Vector3(player.pos.x, player.pos.y + (PLAYER_H - 0.15) * s, player.pos.z);
 }
 
 function raycastVoxel(maxDist, origin, dirOverride) {
@@ -1693,7 +1725,7 @@ document.addEventListener('mousedown', e => {
 
   // Vue 3e personne = atelier camouflage : peindre son perso / pipette
   if (thirdPerson) {
-    if (e.button === 0) paintSelf();
+    if (e.button === 0) { paintDragging = true; paintSelf(); }
     else if (e.button === 2) pickColor();
     return;
   }
@@ -1721,6 +1753,7 @@ document.addEventListener('mousedown', e => {
     }
   }
 });
+document.addEventListener('mouseup', () => { paintDragging = false; });
 document.addEventListener('contextmenu', e => e.preventDefault());
 
 // ---------- HUD ----------
@@ -1834,9 +1867,11 @@ function loop(now) {
     const head = headPos();
     if (thirdPerson) {
       // Caméra en orbite autour du joueur, rapprochée si un bloc gêne
+      // (et plus proche quand le perso est rétréci)
       const dir = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
-      let dist = 3.8;
-      for (let t = 0.4; t <= 3.8; t += 0.15) {
+      const maxDist = myScale() < 1 ? 2 : 3.8;
+      let dist = maxDist;
+      for (let t = 0.3; t <= maxDist; t += 0.15) {
         if (isSolid(head.x - dir.x * t, head.y - dir.y * t, head.z - dir.z * t)) {
           dist = Math.max(0.3, t - 0.25);
           break;
@@ -1849,8 +1884,9 @@ function loop(now) {
   }
 
   // Joueurs distants : interpolation + animation de marche (bras/jambes)
-  for (const r of remotePlayers.values()) {
+  for (const [rid, r] of remotePlayers) {
     const g = r.group;
+    g.scale.setScalar(game.mode === 'hide' && !game.hunters.has(rid) ? HIDER_SCALE : 1);
     const tgt = new THREE.Vector3(r.target.x, r.target.y, r.target.z);
     const gap = g.position.distanceTo(tgt);
     g.position.lerp(tgt, 0.25);
@@ -1870,6 +1906,7 @@ function loop(now) {
   const showSelf = thirdPerson && locked && !spectating;
   selfMesh.visible = showSelf;
   if (showSelf) {
+    selfMesh.scale.setScalar(myScale());
     selfMesh.position.copy(player.pos);
     selfMesh.rotation.y = player.yaw;
     const hSpeed = Math.hypot(player.vel.x, player.vel.z);
