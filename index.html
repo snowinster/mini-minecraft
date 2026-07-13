@@ -208,7 +208,7 @@
 <div id="flash"></div>
 <div id="vignette"></div>
 <div id="ammo"></div>
-<div id="paintInfo"><span class="pc" id="paintSwatch"></span>Souris : pinceau &nbsp;|&nbsp; Flèches : tourner autour du perso &nbsp;|&nbsp; Clic G : peindre &nbsp;|&nbsp; Clic D : pipette</div>
+<div id="paintInfo"><span class="pc" id="paintSwatch"></span>Souris : pinceau &nbsp;|&nbsp; Flèches : tourner autour &nbsp;|&nbsp; Clic G : peindre &nbsp;|&nbsp; Clic D : pipette &nbsp;|&nbsp; P : sortir</div>
 <div id="paintCursor"></div>
 <div id="blind"><h2>Les joueurs se cachent...</h2><div class="count">60</div><p>Tu es le CHASSEUR. Prépare-toi !</p></div>
 <div id="deadOverlay"><div>💀 Tu as été éliminé !</div></div>
@@ -246,7 +246,7 @@
         <div class="rItem"><div class="rIcon">🙈</div><div><b>Cache-cache</b> : un chasseur est tiré au sort. Les cachés ont 60 s pour se planquer (<kbd>R</kbd> = prêt en avance), puis 3 min de chasse pendant que la nuit tombe.</div></div>
         <div class="rItem"><div class="rIcon">❤️</div><div><b>Survie</b> : les cachés sont <b>3x plus petits</b>, ont 2 vies mais ne peuvent pas toucher aux blocs — leurs armes : la taille et le camouflage. Le chasseur a 5 balles par chargeur, rechargement 2,5 s.</div></div>
         <div class="rItem"><div class="rIcon">🎭</div><div><b>Leurre</b> : <kbd>F</kbd> pose un faux joueur (1 par partie) pour piéger le chasseur.</div></div>
-        <div class="rItem"><div class="rIcon">🎨</div><div><b>Peinture camouflage</b> : <kbd>C</kbd> passe en vue 3e personne. Là, clic droit sur un bloc = pipette (tu prends sa couleur exacte), clic gauche sur ton perso = tu le peins pixel par pixel. Fonds-toi dans le décor !</div></div>
+        <div class="rItem"><div class="rIcon">🎨</div><div><b>Peinture camouflage</b> : <kbd>C</kbd> bascule la vue 1re/3e personne (les cachés démarrent en 3e personne). <kbd>P</kbd> ouvre l'atelier : souris = pinceau, flèches = tourner autour du perso, clic droit = pipette sur un bloc, clic gauche = peindre pixel par pixel. Fonds-toi dans le décor !</div></div>
         <div class="rItem"><div class="rIcon">⭐</div><div><b>Points</b> : reste a moins de 20 blocs du chasseur sans te faire voir pour gagner des points de discrétion.</div></div>
         <div class="rItem"><div class="rIcon">🧊</div><div><b>Chat glacé</b> : variante où chaque joueur touché devient chasseur a son tour !</div></div>
         <div class="rItem"><div class="rIcon">🫀</div><div><b>Tension</b> : ton écran rougit et ton cœur bat quand le chasseur approche. <kbd>V</kbd> : voir la vue du chasseur (cachés / éliminés).</div></div>
@@ -271,7 +271,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
 <script>
 // ---------- Config ----------
-const WORLD = 64;
+const WORLD = 26; // côté de la map en blocs (petite = parties plus rythmées)
 const GRAVITY = 26, JUMP = 9, SPEED = 6, SPRINT_MULT = 1.65, PLAYER_H = 1.7, REACH = 6;
 const MAX_INSTANCES = 20000;
 const PEER_PREFIX = 'minimc-fr-';
@@ -302,7 +302,7 @@ const DEFAULT_SETTINGS = {
   binds: {
     forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
     jump: 'Space', sprint: 'ShiftLeft', decoy: 'KeyF', pov: 'KeyV', ready: 'KeyR',
-    view: 'KeyC',
+    view: 'KeyC', paint: 'KeyP',
   },
 };
 let settings = loadSettings();
@@ -415,18 +415,125 @@ const world = new Map();
 const edits = new Map();
 const key = (x, y, z) => `${x},${y},${z}`;
 
+// ---------- Textures procédurales façon Minecraft (aucun fichier) ----------
+function shadeCss(hex, f) { return '#' + new THREE.Color(hex).multiplyScalar(f).getHexString(); }
+
+function makeBlockTexture(base, kind) {
+  const S = 16;
+  const canvas = document.createElement('canvas');
+  canvas.width = S;
+  canvas.height = S;
+  const c = canvas.getContext('2d');
+  c.fillStyle = shadeCss(base, 1);
+  c.fillRect(0, 0, S, S);
+  // grain : pixels aléatoires plus clairs / plus foncés
+  for (let i = 0; i < 70; i++) {
+    c.fillStyle = shadeCss(base, 0.82 + Math.random() * 0.36);
+    c.fillRect(Math.floor(Math.random() * S), Math.floor(Math.random() * S), 1, 1);
+  }
+  if (kind === 'grassSide') {
+    // bande d'herbe en haut du bloc, bord irrégulier
+    for (let x = 0; x < S; x++) {
+      const hgt = 3 + Math.floor(Math.random() * 3);
+      for (let y = 0; y < hgt; y++) {
+        c.fillStyle = shadeCss(0x5aa832, 0.85 + Math.random() * 0.3);
+        c.fillRect(x, y, 1, 1);
+      }
+    }
+  } else if (kind === 'wood') {
+    // veines verticales du bois
+    for (let x = 1; x < S; x += 4) {
+      c.fillStyle = shadeCss(base, 0.7);
+      c.fillRect(x, 0, 1, S);
+    }
+  } else if (kind === 'leaf') {
+    // feuillage moucheté
+    for (let i = 0; i < 26; i++) {
+      c.fillStyle = shadeCss(base, 0.6);
+      c.fillRect(Math.floor(Math.random() * S), Math.floor(Math.random() * S), 2, 1);
+    }
+  } else if (kind === 'stone') {
+    // taches plus sombres de la pierre
+    for (let i = 0; i < 10; i++) {
+      c.fillStyle = shadeCss(base, 0.78);
+      c.fillRect(Math.floor(Math.random() * (S - 2)), Math.floor(Math.random() * (S - 2)), 2 + Math.floor(Math.random() * 2), 2);
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.NearestFilter;
+  return tex;
+}
+
+const BLOCK_KINDS = {
+  grass: { top: null, side: 'grassSide' },
+  dirt:  { top: null, side: null },
+  stone: { top: 'stone', side: 'stone' },
+  wood:  { top: null, side: 'wood' },
+  leaf:  { top: 'leaf', side: 'leaf' },
+};
+
 const geo = new THREE.BoxGeometry(1, 1, 1);
 const NEIGHBORS = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
 const instanced = {};
 for (const t of Object.keys(TYPES)) {
   const c = TYPES[t];
-  const side = new THREE.MeshLambertMaterial({ color: c.side });
-  const top = new THREE.MeshLambertMaterial({ color: c.top });
+  const side = new THREE.MeshLambertMaterial({ map: makeBlockTexture(c.side, BLOCK_KINDS[t].side) });
+  const top = new THREE.MeshLambertMaterial({ map: makeBlockTexture(c.top, BLOCK_KINDS[t].top) });
   const mesh = new THREE.InstancedMesh(geo, [side, side, top, side, side, side], MAX_INSTANCES);
   mesh.count = 0;
   mesh.frustumCulled = false;
   scene.add(mesh);
   instanced[t] = mesh;
+}
+
+// ---------- Déco : fleurs et hautes herbes (sans collision) ----------
+const decorGroup = new THREE.Group();
+scene.add(decorGroup);
+
+function makePlantTexture(draw) {
+  const S = 16;
+  const canvas = document.createElement('canvas');
+  canvas.width = S;
+  canvas.height = S;
+  draw(canvas.getContext('2d'));
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.NearestFilter;
+  return tex;
+}
+
+function drawFlower(petal) {
+  return c => {
+    c.fillStyle = '#3e7d2c'; // tige + feuille
+    c.fillRect(7, 8, 2, 8);
+    c.fillRect(5, 11, 2, 2);
+    c.fillStyle = petal;     // pétales
+    c.fillRect(5, 3, 6, 6);
+    c.fillStyle = '#ffd94a'; // cœur
+    c.fillRect(7, 5, 2, 2);
+  };
+}
+function drawGrassTuft(c) {
+  for (let i = 0; i < 7; i++) {
+    c.fillStyle = shadeCss(0x4a9130, 0.8 + Math.random() * 0.4);
+    const h = 5 + Math.floor(Math.random() * 8);
+    c.fillRect(2 + i * 2, 16 - h, 1, h);
+  }
+}
+const FLOWER_TEXTURES = [
+  makePlantTexture(drawFlower('#e74c3c')),
+  makePlantTexture(drawFlower('#f6f6f6')),
+  makePlantTexture(drawFlower('#4a8be5')),
+];
+const GRASS_TUFT_TEX = makePlantTexture(drawGrassTuft);
+
+function addPlant(x, y, z, tex, size) {
+  const mat = new THREE.MeshLambertMaterial({ map: tex, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide });
+  for (const rot of [Math.PI / 4, Math.PI / 4 + Math.PI / 2]) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
+    m.position.set(x + 0.5, y + size / 2, z + 0.5);
+    m.rotation.y = rot;
+    decorGroup.add(m);
+  }
 }
 
 function isExposed(x, y, z) {
@@ -565,12 +672,27 @@ function generateWorld() {
   // Maisons en ruine (cachettes) - seconde passe pour pouvoir creuser l'intérieur
   for (let x = -half + 4; x < half - 8; x++)
     for (let z = -half + 4; z < half - 8; z++)
-      if (ihash(x, z, 20) > 0.9985) buildHouse(x, z);
+      if (ihash(x, z, 20) > 0.995) buildHouse(x, z);
 
   for (const [k, t] of edits) {
     if (t === null) world.delete(k);
     else world.set(k, t);
   }
+
+  // Fleurs et hautes herbes sur les blocs d'herbe libres
+  decorGroup.clear();
+  for (let x = -half; x < half; x++) {
+    for (let z = -half; z < half; z++) {
+      const h = heightAt(x, z);
+      if (world.get(key(x, h, z)) !== 'grass' || world.has(key(x, h + 1, z))) continue;
+      if (ihash(x, z, 31) > 0.975) {
+        addPlant(x, h + 1, z, FLOWER_TEXTURES[Math.floor(ihash(x, z, 32) * FLOWER_TEXTURES.length)], 0.6);
+      } else if (ihash(x, z, 30) > 0.88) {
+        addPlant(x, h + 1, z, GRASS_TUFT_TEX, 0.7);
+      }
+    }
+  }
+
   rebuild();
 }
 generateWorld();
@@ -813,21 +935,36 @@ function isHunter() { return game.mode === 'hide' && game.hunters.has(myId()); }
 const HIDER_SCALE = 1 / 3;
 function myScale() { return (game.mode === 'hide' && !isHunter()) ? HIDER_SCALE : 1; }
 
-let thirdPerson = false;
-// En 3e personne, la souris devient un curseur libre (pinceau) et la
-// caméra orbite autour du perso avec les flèches.
+// Deux états séparés :
+// - thirdPerson : vue caméra derrière le perso, souris = caméra (jeu normal)
+// - paintMode   : atelier peinture (souris = pinceau libre, flèches = orbite)
+let thirdPerson = false, paintMode = false;
 let orbitYaw = 0, orbitPitch = 0.15;
 let cursorX = 0, cursorY = 0;
+let paintDist = 3; // distance de la caméra en atelier (molette = zoom)
+
 function setThirdPerson(on) {
   thirdPerson = on;
-  if (on) {
+  if (!on) paintMode = false;
+  refreshViewUI();
+}
+
+function setPaintMode(on) {
+  paintMode = on && !isHunter();
+  if (paintMode) {
+    thirdPerson = true; // l'atelier se passe forcément en 3e personne
     orbitYaw = 0;
     orbitPitch = 0.15;
+    paintDist = myScale() < 1 ? 1.6 : 3;
     cursorX = innerWidth / 2;
     cursorY = innerHeight / 2;
   }
-  crosshairEl.style.display = on ? 'none' : 'block';
-  paintCursorEl.style.display = on ? 'block' : 'none';
+  refreshViewUI();
+}
+
+function refreshViewUI() {
+  crosshairEl.style.display = paintMode ? 'none' : 'block';
+  paintCursorEl.style.display = paintMode ? 'block' : 'none';
   paintCursorEl.style.left = cursorX + 'px';
   paintCursorEl.style.top = cursorY + 'px';
   updatePaintUI();
@@ -841,7 +978,7 @@ let paintColor = 0x5aa832;
 const paintRaycaster = new THREE.Raycaster();
 
 function updatePaintUI() {
-  paintInfoEl.style.display = (thirdPerson && !isHunter()) ? 'block' : 'none';
+  paintInfoEl.style.display = (paintMode && !isHunter()) ? 'block' : 'none';
   paintSwatchEl.style.background = cssColor(paintColor);
 }
 
@@ -932,7 +1069,8 @@ let decoyUsed = false;
 function spawnDecoy(id, p, color, name, yaw, skin) {
   const group = makePlayerMesh(color);
   if (skin) applySkin(group, skin);
-  if (name) group.add(makeNameSprite(name));
+  // Pas de pseudo sur le leurre : les noms sont masqués pendant la partie
+  if (name && game.mode !== 'hide') group.add(makeNameSprite(name));
   group.position.set(p[0], p[1], p[2]);
   group.rotation.y = yaw || 0;
   const scale = game.mode === 'hide' ? HIDER_SCALE : 1; // leurre a la taille des cachés
@@ -1002,9 +1140,11 @@ function startHideSeek(hunterId, hiders, mode) {
   hud.style.display = 'none'; // pas de blocs pendant le cache-cache
 
   if (isHunter()) {
+    setThirdPerson(false);
     blind.style.display = 'flex';
   } else {
-    showNotif('🙈 Tu es CACHÉ ! Le chasseur est ' + nameOf(hunterId) + ' - C pour te camoufler', 4000);
+    setThirdPerson(true); // les cachés démarrent en vue 3e personne
+    showNotif('🙈 Tu es CACHÉ ! Le chasseur est ' + nameOf(hunterId) + ' - P pour te camoufler', 4000);
   }
   banner.style.display = 'block';
   updateGameUI();
@@ -1043,6 +1183,8 @@ function endHideSeek(who, scores) {
   game.dead = false;
   game.hunters = new Set();
   setSpectating(false);
+  setPaintMode(false);
+  setThirdPerson(false);
   clearDecoys();
   updateHunterModels();
   updateAmmoUI();
@@ -1486,7 +1628,8 @@ document.getElementById('settingsBack').onclick = () => { listeningBind = null; 
 const BIND_DEFS = [
   ['forward', '⬆️ Avancer'], ['back', '⬇️ Reculer'], ['left', '⬅️ Gauche'], ['right', '➡️ Droite'],
   ['jump', '🦘 Sauter'], ['sprint', '💨 Sprint'], ['decoy', '🎭 Poser un leurre'],
-  ['pov', '👁 POV chasseur'], ['ready', '✔ Prêt (cachette)'], ['view', '📷 Vue 3e personne'],
+  ['pov', '👁 POV chasseur'], ['ready', '✔ Prêt (cachette)'], ['view', '📷 Vue 1re/3e pers.'],
+  ['paint', '🎨 Atelier peinture'],
 ];
 let listeningBind = null;
 let layoutMap = null;
@@ -1629,8 +1772,8 @@ document.addEventListener('mousemove', e => {
   // Bug connu du pointer lock (Chrome) : un delta de souris géant arrive
   // parfois d'un coup et fait "sauter" la caméra. On ignore ces pics.
   if (Math.abs(e.movementX) > 200 || Math.abs(e.movementY) > 200) return;
-  // En 3e personne, la souris déplace le curseur-pinceau, pas la caméra
-  if (thirdPerson) {
+  // En mode atelier, la souris déplace le curseur-pinceau, pas la caméra
+  if (paintMode) {
     cursorX = Math.max(0, Math.min(innerWidth, cursorX + e.movementX));
     cursorY = Math.max(0, Math.min(innerHeight, cursorY + e.movementY));
     paintCursorEl.style.left = cursorX + 'px';
@@ -1670,10 +1813,23 @@ document.addEventListener('keydown', e => {
       showNotif(thirdPerson ? '📷 Vue 3e personne' : '📷 Vue 1re personne', 1200);
     }
   }
+  if (e.code === settings.binds.paint && !game.dead && !spectating) {
+    if (isHunter()) {
+      showNotif('Le chasseur ne se peint pas !', 1500);
+    } else {
+      setPaintMode(!paintMode);
+      showNotif(paintMode ? '🎨 Atelier peinture ouvert (P pour sortir)' : '🎨 Atelier fermé', 1500);
+    }
+  }
 });
 document.addEventListener('keyup', e => keys[e.code] = false);
 document.addEventListener('wheel', e => {
   if (!locked) return;
+  // En atelier peinture, la molette zoome pour peindre les détails
+  if (paintMode) {
+    paintDist = Math.max(0.6, Math.min(5, paintDist + (e.deltaY > 0 ? 0.3 : -0.3)));
+    return;
+  }
   selected = (selected + (e.deltaY > 0 ? 1 : -1) + PLACEABLE.length) % PLACEABLE.length;
   updateHud();
 });
@@ -1723,8 +1879,8 @@ document.addEventListener('mousedown', e => {
     return;
   }
 
-  // Vue 3e personne = atelier camouflage : peindre son perso / pipette
-  if (thirdPerson) {
+  // Mode atelier : peindre son perso / pipette
+  if (paintMode) {
     if (e.button === 0) { paintDragging = true; paintSelf(); }
     else if (e.button === 2) pickColor();
     return;
@@ -1732,11 +1888,11 @@ document.addEventListener('mousedown', e => {
 
   // Les cachés ne peuvent NI casser NI poser de blocs
   if (game.mode === 'hide') {
-    showNotif('Pas de blocs en cache-cache ! Appuie sur C pour te peindre en camouflage.', 2000);
+    showNotif('Pas de blocs en cache-cache ! Appuie sur P pour te peindre en camouflage.', 2000);
     return;
   }
 
-  const hit = raycastVoxel();
+  const hit = raycastVoxel(REACH, thirdPerson ? headPos() : null);
   if (!hit) return;
 
   if (e.button === 0) {
@@ -1785,11 +1941,11 @@ function stepPhysics(dt, canControl) {
     const B = settings.binds;
     const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
     const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-    // En 3e personne les flèches servent a orbiter la caméra, pas a bouger
-    if (keys[B.forward] || (!thirdPerson && keys['ArrowUp'])) move.add(fwd);
-    if (keys[B.back] || (!thirdPerson && keys['ArrowDown'])) move.sub(fwd);
-    if (keys[B.right] || (!thirdPerson && keys['ArrowRight'])) move.add(right);
-    if (keys[B.left] || (!thirdPerson && keys['ArrowLeft'])) move.sub(right);
+    // En mode atelier les flèches servent a orbiter la caméra, pas a bouger
+    if (keys[B.forward] || (!paintMode && keys['ArrowUp'])) move.add(fwd);
+    if (keys[B.back] || (!paintMode && keys['ArrowDown'])) move.sub(fwd);
+    if (keys[B.right] || (!paintMode && keys['ArrowRight'])) move.add(right);
+    if (keys[B.left] || (!paintMode && keys['ArrowLeft'])) move.sub(right);
     const sprintDown = keys[B.sprint] || (B.sprint.startsWith('Shift') && (keys['ShiftLeft'] || keys['ShiftRight']));
     if (move.lengthSq() > 0) move.normalize().multiplyScalar(SPEED * (sprintDown ? SPRINT_MULT : 1));
     if (keys[B.jump] && player.onGround) { player.vel.y = JUMP; player.onGround = false; }
@@ -1854,22 +2010,22 @@ function loop(now) {
     camera.rotation.x = t.pitch || 0;
   } else {
     if (spectating) setSpectating(false);
-    // Orbite de la caméra avec les flèches en 3e personne
-    if (thirdPerson && locked) {
+    // Orbite de la caméra avec les flèches en mode atelier
+    if (paintMode && locked) {
       if (keys['ArrowLeft']) orbitYaw += dt * 2.2;
       if (keys['ArrowRight']) orbitYaw -= dt * 2.2;
       if (keys['ArrowUp']) orbitPitch = Math.min(1.25, orbitPitch + dt * 1.8);
       if (keys['ArrowDown']) orbitPitch = Math.max(-1.25, orbitPitch - dt * 1.8);
     }
     camera.rotation.order = 'YXZ';
-    camera.rotation.y = thirdPerson ? player.yaw + orbitYaw : player.yaw;
-    camera.rotation.x = thirdPerson ? -orbitPitch : player.pitch;
+    camera.rotation.y = paintMode ? player.yaw + orbitYaw : player.yaw;
+    camera.rotation.x = paintMode ? -orbitPitch : player.pitch;
     const head = headPos();
     if (thirdPerson) {
       // Caméra en orbite autour du joueur, rapprochée si un bloc gêne
       // (et plus proche quand le perso est rétréci)
       const dir = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
-      const maxDist = myScale() < 1 ? 2 : 3.8;
+      const maxDist = paintMode ? paintDist : (myScale() < 1 ? 2 : 3.8);
       let dist = maxDist;
       for (let t = 0.3; t <= maxDist; t += 0.15) {
         if (isSolid(head.x - dir.x * t, head.y - dir.y * t, head.z - dir.z * t)) {
@@ -1887,6 +2043,9 @@ function loop(now) {
   for (const [rid, r] of remotePlayers) {
     const g = r.group;
     g.scale.setScalar(game.mode === 'hide' && !game.hunters.has(rid) ? HIDER_SCALE : 1);
+    // Pseudos masqués pendant le cache-cache (sinon ils trahissent les cachés)
+    const tag = g.getObjectByName('nametag');
+    if (tag) tag.visible = game.mode !== 'hide';
     const tgt = new THREE.Vector3(r.target.x, r.target.y, r.target.z);
     const gap = g.position.distanceTo(tgt);
     g.position.lerp(tgt, 0.25);
@@ -1919,10 +2078,9 @@ function loop(now) {
     L.rArm.rotation.x = swing * 0.8;
   }
 
-  // Surbrillance du bloc visé (seulement quand on peut construire :
-  // mode libre, 1re personne)
-  if (locked && !frozen && !isHunter() && game.mode !== 'hide' && !thirdPerson) {
-    const aim = raycastVoxel();
+  // Surbrillance du bloc visé (seulement quand on peut construire)
+  if (locked && !frozen && !isHunter() && game.mode !== 'hide' && !paintMode) {
+    const aim = raycastVoxel(REACH, thirdPerson ? headPos() : null);
     if (aim) { hlBox.position.set(aim.x + 0.5, aim.y + 0.5, aim.z + 0.5); hlBox.visible = true; }
     else hlBox.visible = false;
   } else {
