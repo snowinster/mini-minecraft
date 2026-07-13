@@ -130,6 +130,15 @@
   }
   .input:focus { border-color: #9fe870; }
   #codeInput { text-transform: uppercase; letter-spacing: 5px; }
+  .swLabel { font-size: 10px; letter-spacing: 2px; color: #ffd94a; text-transform: uppercase; margin: 6px 0 6px; }
+  #swatches { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin-bottom: 4px; }
+  .sw {
+    width: 26px; height: 26px; border-radius: 6px; cursor: pointer;
+    border: 2px solid rgba(255,255,255,.25); box-shadow: 0 2px 4px rgba(0,0,0,.4);
+    transition: transform .08s;
+  }
+  .sw:hover { transform: scale(1.12); }
+  .sw.sel { border-color: #fff; transform: scale(1.15); box-shadow: 0 0 8px rgba(255,255,255,.5); }
   #joinRow { display: none; gap: 8px; align-items: center; }
   #joinRow .btn { width: auto; min-width: 90px; margin: 0; }
   #roomInfo {
@@ -200,6 +209,8 @@
     <div id="menuHome" class="view">
       <div id="resultBox"></div>
       <input id="nameInput" class="input" maxlength="12" placeholder="TON PSEUDO">
+      <div class="swLabel">Couleur du perso — vert / marron pour te camoufler 🌿</div>
+      <div id="swatches"></div>
       <button class="btn" id="soloBtn">🌍 JOUER EN SOLO</button>
       <button class="btn alt" id="hostBtn">🎮 CRÉER UNE PARTIE EN LIGNE</button>
       <button class="btn alt" id="joinBtn">🔑 REJOINDRE UNE PARTIE</button>
@@ -225,6 +236,7 @@
         <div class="rItem"><div class="rIcon">🙈</div><div><b>Cache-cache</b> : un chasseur est tiré au sort. Les cachés ont 60 s pour se planquer (<kbd>R</kbd> = prêt en avance), puis 3 min de chasse pendant que la nuit tombe.</div></div>
         <div class="rItem"><div class="rIcon">❤️</div><div><b>Survie</b> : les cachés ont 2 vies et peuvent poser des blocs (mais rien casser). Le chasseur a 5 balles par chargeur, rechargement 2,5 s.</div></div>
         <div class="rItem"><div class="rIcon">🎭</div><div><b>Leurre</b> : <kbd>F</kbd> pose un faux joueur (1 par partie) pour piéger le chasseur.</div></div>
+        <div class="rItem"><div class="rIcon">📷</div><div><b>Vue 3e personne</b> : <kbd>C</kbd> pour te voir dans le décor et vérifier ton camouflage (le chasseur, lui, vise en 1re personne). Choisis une couleur de perso camouflage dans le menu !</div></div>
         <div class="rItem"><div class="rIcon">⭐</div><div><b>Points</b> : reste a moins de 20 blocs du chasseur sans te faire voir pour gagner des points de discrétion.</div></div>
         <div class="rItem"><div class="rIcon">🧊</div><div><b>Chat glacé</b> : variante où chaque joueur touché devient chasseur a son tour !</div></div>
         <div class="rItem"><div class="rIcon">🫀</div><div><b>Tension</b> : ton écran rougit et ton cœur bat quand le chasseur approche. <kbd>V</kbd> : voir la vue du chasseur (cachés / éliminés).</div></div>
@@ -266,7 +278,11 @@ const TYPES = {
   leaf:  { name: 'Feuille',top: 0x3e7d2c, side: 0x3e7d2c },
 };
 const PLACEABLE = ['grass', 'dirt', 'stone', 'wood', 'leaf'];
-const PLAYER_COLORS = [0xe74c3c, 0x3498db, 0xf1c40f, 0x9b59b6, 0x1abc9c];
+// Couleurs de perso : vives + camouflage (herbe, feuille, terre, pierre, bois, nuit)
+const SKIN_COLORS = [0xe74c3c, 0x3498db, 0xf1c40f, 0x9b59b6, 0x1abc9c, 0xff8fb3,
+                     0x5aa832, 0x3e7d2c, 0x7a5230, 0x8a8a8a, 0x8b5a2b, 0x2c3e50];
+let myColorHex = parseInt(localStorage.getItem('mmc_color') || '', 10);
+if (!SKIN_COLORS.includes(myColorHex)) myColorHex = SKIN_COLORS[0];
 let selected = 0;
 
 // ---------- Réglages persistants (volume, sensibilité, touches) ----------
@@ -276,6 +292,7 @@ const DEFAULT_SETTINGS = {
   binds: {
     forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
     jump: 'Space', sprint: 'ShiftLeft', decoy: 'KeyF', pov: 'KeyV', ready: 'KeyR',
+    view: 'KeyC',
   },
 };
 let settings = loadSettings();
@@ -551,8 +568,7 @@ generateWorld();
 // ---------- Joueurs distants ----------
 const remotePlayers = new Map();
 
-function makePlayerMesh(colorIdx) {
-  const color = PLAYER_COLORS[colorIdx % PLAYER_COLORS.length];
+function makePlayerMesh(color) {
   const g = new THREE.Group();
   const mat = new THREE.MeshLambertMaterial({ color });
   const skin = new THREE.MeshLambertMaterial({ color: 0xffd9b3 });
@@ -579,7 +595,16 @@ function makePlayerMesh(colorIdx) {
     limbs[name] = pivot;
   }
   g.userData.limbs = limbs;
+  g.userData.mats = { mat, dark };
   return g;
+}
+
+// Change la couleur d'un perso déjà créé (choix de camouflage en jeu)
+function setMeshColor(group, color) {
+  const m = group.userData.mats;
+  if (!m) return;
+  m.mat.color.setHex(color);
+  m.dark.color.setHex(color).multiplyScalar(0.55);
 }
 
 // Pseudo affiché au-dessus de la tête (masqué par les blocs : ne trahit pas les cachés)
@@ -634,15 +659,21 @@ function updateHunterModels() {
   }
 }
 
-function ensureRemote(id, colorIdx) {
+function ensureRemote(id, color) {
   if (remotePlayers.has(id)) return remotePlayers.get(id);
-  const group = makePlayerMesh(colorIdx);
+  const group = makePlayerMesh(color);
   scene.add(group);
-  const r = { group, target: { x: 0, y: -100, z: 0, yaw: 0, pitch: 0 }, walkPhase: 0, name: null, lastSeen: performance.now() };
+  const r = { group, color, target: { x: 0, y: -100, z: 0, yaw: 0, pitch: 0 }, walkPhase: 0, name: null, lastSeen: performance.now() };
   remotePlayers.set(id, r);
   updateNetStatus();
   updateHunterModels();
   return r;
+}
+
+function setRemoteColor(r, color) {
+  if (r.color === color) return;
+  r.color = color;
+  setMeshColor(r.group, color);
 }
 function removeRemote(id) {
   const r = remotePlayers.get(id);
@@ -661,6 +692,12 @@ setInterval(() => {
     }
   }
 }, 3000);
+
+// ---------- Vue 3e personne : modèle de son propre perso ----------
+const selfMesh = makePlayerMesh(myColorHex);
+selfMesh.visible = false;
+scene.add(selfMesh);
+let selfWalkPhase = 0;
 
 // ---------- Animation de tir (hitscan, sans recul) ----------
 function showTracer(a, b) {
@@ -714,6 +751,9 @@ const ammoEl = document.getElementById('ammo');
 function myId() { return net.peer ? net.peer.id : 'local'; }
 function isHunter() { return game.mode === 'hide' && game.hunters.has(myId()); }
 
+let thirdPerson = false;
+function setThirdPerson(on) { thirdPerson = on; }
+
 const playerNames = new Map();
 function nameOf(id) {
   if (id === myId()) return myName || 'Toi';
@@ -742,8 +782,8 @@ function startReload() {
 // ---------- Leurres (faux joueurs, 1 par partie) ----------
 const decoys = new Map();
 let decoyUsed = false;
-function spawnDecoy(id, p, colorIdx, name, yaw) {
-  const group = makePlayerMesh(colorIdx);
+function spawnDecoy(id, p, color, name, yaw) {
+  const group = makePlayerMesh(color);
   if (name) group.add(makeNameSprite(name));
   group.position.set(p[0], p[1], p[2]);
   group.rotation.y = yaw || 0;
@@ -761,8 +801,8 @@ function placeDecoy() {
   decoyUsed = true;
   const id = 'decoy-' + myId() + '-' + Math.floor(Math.random() * 1e9);
   const p = [player.pos.x, player.pos.y, player.pos.z];
-  spawnDecoy(id, p, net.myColor, myName, player.yaw);
-  net.broadcast({ t: 'hs_decoy', id, p, color: net.myColor, name: myName, yaw: player.yaw }, null);
+  spawnDecoy(id, p, myColorHex, myName, player.yaw);
+  net.broadcast({ t: 'hs_decoy', id, p, color: myColorHex, name: myName, yaw: player.yaw }, null);
   sfx.decoy();
   showNotif('🎭 Leurre posé !', 2000);
 }
@@ -829,6 +869,7 @@ function startHunting() {
     crosshairEl.classList.add('gun');
     ammo = MAG_SIZE;
     reloading = false;
+    setThirdPerson(false); // le chasseur vise en 1re personne
     showNotif('A la chasse ! Clic gauche pour tirer.', 3000);
   } else if (!game.dead) {
     showNotif('Le chasseur arrive... ne bouge plus !', 3000);
@@ -990,6 +1031,7 @@ function onConvert(id) {
     crosshairEl.classList.add('gun');
     ammo = MAG_SIZE;
     reloading = false;
+    setThirdPerson(false);
     showNotif('🧊 Tu as été touché ! Tu deviens CHASSEUR : attrape les autres !', 3500);
   } else {
     showNotif('🧊 ' + nameOf(id) + ' a rejoint les chasseurs !', 2500);
@@ -1096,7 +1138,7 @@ function shoot() {
 
 // ---------- Réseau ----------
 const net = {
-  peer: null, isHost: false, conns: [], myColor: 0, nextColor: 1,
+  peer: null, isHost: false, conns: [],
 
   makeCode() {
     const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -1109,14 +1151,12 @@ const net = {
     const code = this.makeCode();
     this.peer = new Peer(PEER_PREFIX + code);
     this.isHost = true;
-    this.myColor = 0;
     this.peer.on('open', () => onReady(code));
     this.peer.on('error', e => onError(e));
     this.peer.on('connection', conn => {
-      const colorIdx = this.nextColor++;
       conn.on('open', () => {
         this.conns.push(conn);
-        conn.send({ t: 'init', color: colorIdx, edits: [...edits.entries()] });
+        conn.send({ t: 'init', edits: [...edits.entries()] });
         updateNetStatus();
         document.getElementById('hideSeekBtn').style.display = 'block';
         document.getElementById('chatBtn').style.display = 'block';
@@ -1141,7 +1181,6 @@ const net = {
       conn.on('open', () => { opened = true; this.conns = [conn]; });
       conn.on('data', d => {
         if (d.t === 'init') {
-          this.myColor = d.color;
           edits.clear();
           for (const [k, t] of d.edits) edits.set(k, t);
           generateWorld();
@@ -1161,6 +1200,7 @@ const net = {
       const r = ensureRemote(d.id, d.color);
       r.target = { x: d.p[0], y: d.p[1], z: d.p[2], yaw: d.yaw, pitch: d.pitch || 0 };
       r.lastSeen = performance.now();
+      setRemoteColor(r, d.color);
       if (d.name) { playerNames.set(d.id, d.name); setRemoteName(r, d.name); }
     } else if (d.t === 'edit') {
       applyEdit(d.k, d.type, true);
@@ -1211,7 +1251,7 @@ const net = {
   sendPos() {
     if (!this.peer || !this.conns.length) return;
     this.broadcast({
-      t: 'pos', id: this.peer.id, color: this.myColor, name: myName,
+      t: 'pos', id: this.peer.id, color: myColorHex, name: myName,
       p: [player.pos.x, player.pos.y, player.pos.z], yaw: player.yaw, pitch: player.pitch,
     }, null);
   },
@@ -1257,6 +1297,25 @@ nameInput.addEventListener('input', () => {
   localStorage.setItem('mmc_name', myName);
 });
 
+// Choix de la couleur du perso (sauvegardé, diffusé aux autres joueurs)
+const swEl = document.getElementById('swatches');
+function renderSwatches() {
+  swEl.innerHTML = '';
+  for (const c of SKIN_COLORS) {
+    const d = document.createElement('div');
+    d.className = 'sw' + (c === myColorHex ? ' sel' : '');
+    d.style.background = '#' + c.toString(16).padStart(6, '0');
+    d.onclick = () => {
+      myColorHex = c;
+      localStorage.setItem('mmc_color', String(c));
+      setMeshColor(selfMesh, c);
+      renderSwatches();
+    };
+    swEl.appendChild(d);
+  }
+}
+renderSwatches();
+
 // Navigation entre les pages du menu
 function showView(name) {
   for (const v of document.querySelectorAll('.view')) v.style.display = 'none';
@@ -1271,7 +1330,7 @@ document.getElementById('settingsBack').onclick = () => { listeningBind = null; 
 const BIND_DEFS = [
   ['forward', '⬆️ Avancer'], ['back', '⬇️ Reculer'], ['left', '⬅️ Gauche'], ['right', '➡️ Droite'],
   ['jump', '🦘 Sauter'], ['sprint', '💨 Sprint'], ['decoy', '🎭 Poser un leurre'],
-  ['pov', '👁 POV chasseur'], ['ready', '✔ Prêt (cachette)'],
+  ['pov', '👁 POV chasseur'], ['ready', '✔ Prêt (cachette)'], ['view', '📷 Vue 3e personne'],
 ];
 let listeningBind = null;
 let layoutMap = null;
@@ -1438,6 +1497,14 @@ document.addEventListener('keydown', e => {
   if (e.code === settings.binds.decoy && game.mode === 'hide' && !isHunter() && !game.dead) {
     placeDecoy();
   }
+  if (e.code === settings.binds.view) {
+    if (isHunter() && game.phase === 'hunting') {
+      showNotif('Le chasseur vise en 1re personne !', 1500);
+    } else {
+      setThirdPerson(!thirdPerson);
+      showNotif(thirdPerson ? '📷 Vue 3e personne' : '📷 Vue 1re personne', 1200);
+    }
+  }
 });
 document.addEventListener('keyup', e => keys[e.code] = false);
 document.addEventListener('wheel', e => {
@@ -1447,10 +1514,16 @@ document.addEventListener('wheel', e => {
 });
 
 // ---------- Raycast voxel ----------
-function raycastVoxel(maxDist) {
+// En 3e personne, on vise depuis la tête du joueur (pas depuis la caméra
+// qui est derrière lui), sinon la portée serait faussée.
+function headPos() {
+  return new THREE.Vector3(player.pos.x, player.pos.y + PLAYER_H - 0.15, player.pos.z);
+}
+
+function raycastVoxel(maxDist, origin) {
   const max = maxDist || REACH;
   const dir = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
-  const pos = camera.position.clone();
+  const pos = (origin || camera.position).clone();
   let x = Math.floor(pos.x), y = Math.floor(pos.y), z = Math.floor(pos.z);
   const stepX = Math.sign(dir.x), stepY = Math.sign(dir.y), stepZ = Math.sign(dir.z);
   const tDeltaX = Math.abs(1 / dir.x), tDeltaY = Math.abs(1 / dir.y), tDeltaZ = Math.abs(1 / dir.z);
@@ -1484,7 +1557,7 @@ document.addEventListener('mousedown', e => {
     return;
   }
 
-  const hit = raycastVoxel();
+  const hit = raycastVoxel(REACH, thirdPerson ? headPos() : null);
   if (!hit) return;
 
   if (e.button === 0) {
@@ -1604,10 +1677,24 @@ function loop(now) {
     camera.rotation.x = t.pitch || 0;
   } else {
     if (spectating) setSpectating(false);
-    camera.position.set(player.pos.x, player.pos.y + PLAYER_H - 0.15, player.pos.z);
     camera.rotation.order = 'YXZ';
     camera.rotation.y = player.yaw;
     camera.rotation.x = player.pitch;
+    const head = headPos();
+    if (thirdPerson) {
+      // Caméra derrière le joueur, rapprochée si un bloc gêne
+      const dir = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
+      let dist = 3.8;
+      for (let t = 0.4; t <= 3.8; t += 0.15) {
+        if (isSolid(head.x - dir.x * t, head.y - dir.y * t, head.z - dir.z * t)) {
+          dist = Math.max(0.3, t - 0.25);
+          break;
+        }
+      }
+      camera.position.set(head.x - dir.x * dist, head.y - dir.y * dist, head.z - dir.z * dist);
+    } else {
+      camera.position.copy(head);
+    }
   }
 
   // Joueurs distants : interpolation + animation de marche (bras/jambes)
@@ -1628,9 +1715,25 @@ function loop(now) {
     }
   }
 
+  // Modèle de son propre perso, visible seulement en 3e personne
+  const showSelf = thirdPerson && locked && !spectating;
+  selfMesh.visible = showSelf;
+  if (showSelf) {
+    selfMesh.position.copy(player.pos);
+    selfMesh.rotation.y = player.yaw;
+    const hSpeed = Math.hypot(player.vel.x, player.vel.z);
+    if (hSpeed > 0.5) selfWalkPhase += dt * 14;
+    const swing = Math.sin(selfWalkPhase) * Math.min(hSpeed / SPEED, 1) * 0.7;
+    const L = selfMesh.userData.limbs;
+    L.lLeg.rotation.x = swing;
+    L.rLeg.rotation.x = -swing;
+    L.lArm.rotation.x = -swing * 0.8;
+    L.rArm.rotation.x = swing * 0.8;
+  }
+
   // Surbrillance du bloc visé
   if (locked && !frozen && !isHunter()) {
-    const aim = raycastVoxel();
+    const aim = raycastVoxel(REACH, thirdPerson ? headPos() : null);
     if (aim) { hlBox.position.set(aim.x + 0.5, aim.y + 0.5, aim.z + 0.5); hlBox.visible = true; }
     else hlBox.visible = false;
   } else {
