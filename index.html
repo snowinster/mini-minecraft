@@ -139,6 +139,16 @@
     display: inline-block; width: 14px; height: 14px; border-radius: 3px;
     vertical-align: -2px; border: 1px solid #fff; margin-right: 8px;
   }
+  #paintCursor {
+    position: fixed; width: 18px; height: 18px; margin: -9px 0 0 -9px;
+    border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 5px #000;
+    z-index: 12; display: none; pointer-events: none;
+  }
+  #paintCursor::after {
+    content: ''; position: absolute; left: 50%; top: 50%;
+    width: 3px; height: 3px; background: #fff; border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
   #joinRow { display: none; gap: 8px; align-items: center; }
   #joinRow .btn { width: auto; min-width: 90px; margin: 0; }
   #roomInfo {
@@ -198,7 +208,8 @@
 <div id="flash"></div>
 <div id="vignette"></div>
 <div id="ammo"></div>
-<div id="paintInfo"><span class="pc" id="paintSwatch"></span>Clic gauche : peindre ton perso &nbsp;|&nbsp; Clic droit : pipette (couleur du bloc visé)</div>
+<div id="paintInfo"><span class="pc" id="paintSwatch"></span>Souris : pinceau &nbsp;|&nbsp; Flèches : tourner autour du perso &nbsp;|&nbsp; Clic G : peindre &nbsp;|&nbsp; Clic D : pipette</div>
+<div id="paintCursor"></div>
 <div id="blind"><h2>Les joueurs se cachent...</h2><div class="count">60</div><p>Tu es le CHASSEUR. Prépare-toi !</p></div>
 <div id="deadOverlay"><div>💀 Tu as été éliminé !</div></div>
 
@@ -798,14 +809,29 @@ function myId() { return net.peer ? net.peer.id : 'local'; }
 function isHunter() { return game.mode === 'hide' && game.hunters.has(myId()); }
 
 let thirdPerson = false;
+// En 3e personne, la souris devient un curseur libre (pinceau) et la
+// caméra orbite autour du perso avec les flèches.
+let orbitYaw = 0, orbitPitch = 0.15;
+let cursorX = 0, cursorY = 0;
 function setThirdPerson(on) {
   thirdPerson = on;
+  if (on) {
+    orbitYaw = 0;
+    orbitPitch = 0.15;
+    cursorX = innerWidth / 2;
+    cursorY = innerHeight / 2;
+  }
+  crosshairEl.style.display = on ? 'none' : 'block';
+  paintCursorEl.style.display = on ? 'block' : 'none';
+  paintCursorEl.style.left = cursorX + 'px';
+  paintCursorEl.style.top = cursorY + 'px';
   updatePaintUI();
 }
 
 // ---------- Peinture camouflage (en vue 3e personne) ----------
 const paintInfoEl = document.getElementById('paintInfo');
 const paintSwatchEl = document.getElementById('paintSwatch');
+const paintCursorEl = document.getElementById('paintCursor');
 let paintColor = 0x5aa832;
 const paintRaycaster = new THREE.Raycaster();
 
@@ -814,12 +840,17 @@ function updatePaintUI() {
   paintSwatchEl.style.background = cssColor(paintColor);
 }
 
-// Clic gauche en 3e personne : peint le pixel visé de son propre perso
+// Coordonnées normalisées du curseur-pinceau pour le raycast
+function cursorNDC() {
+  return { x: (cursorX / innerWidth) * 2 - 1, y: -(cursorY / innerHeight) * 2 + 1 };
+}
+
+// Clic gauche en 3e personne : peint le pixel du perso sous le curseur
 function paintSelf() {
-  paintRaycaster.setFromCamera({ x: 0, y: 0 }, camera);
+  paintRaycaster.setFromCamera(cursorNDC(), camera);
   const hits = paintRaycaster.intersectObject(selfMesh, true);
   const hit = hits.find(h => h.object.userData.paint && h.uv);
-  if (!hit) { showNotif('Vise ton personnage pour le peindre', 1200); return; }
+  if (!hit) { showNotif('Place le curseur sur ton personnage pour le peindre', 1200); return; }
   const p = hit.object.userData.paint;
   const px = Math.min(SKIN_RES - 1, Math.floor(hit.uv.x * SKIN_RES));
   const py = Math.min(SKIN_RES - 1, Math.floor((1 - hit.uv.y) * SKIN_RES));
@@ -831,10 +862,11 @@ function paintSelf() {
   queueSkinSync();
 }
 
-// Clic droit en 3e personne : pipette, prend la couleur exacte du bloc visé
+// Clic droit en 3e personne : pipette, prend la couleur du bloc sous le curseur
 function pickColor() {
-  const hit = raycastVoxel(REACH, headPos());
-  if (!hit) { showNotif('Vise un bloc pour prendre sa couleur', 1200); return; }
+  paintRaycaster.setFromCamera(cursorNDC(), camera);
+  const hit = raycastVoxel(20, paintRaycaster.ray.origin, paintRaycaster.ray.direction);
+  if (!hit) { showNotif('Place le curseur sur un bloc pour prendre sa couleur', 1200); return; }
   const t = world.get(key(hit.x, hit.y, hit.z));
   if (!t) return;
   paintColor = (hit.face && hit.face[1] === 1) ? TYPES[t].top : TYPES[t].side;
@@ -1567,6 +1599,14 @@ document.addEventListener('mousemove', e => {
   // Bug connu du pointer lock (Chrome) : un delta de souris géant arrive
   // parfois d'un coup et fait "sauter" la caméra. On ignore ces pics.
   if (Math.abs(e.movementX) > 200 || Math.abs(e.movementY) > 200) return;
+  // En 3e personne, la souris déplace le curseur-pinceau, pas la caméra
+  if (thirdPerson) {
+    cursorX = Math.max(0, Math.min(innerWidth, cursorX + e.movementX));
+    cursorY = Math.max(0, Math.min(innerHeight, cursorY + e.movementY));
+    paintCursorEl.style.left = cursorX + 'px';
+    paintCursorEl.style.top = cursorY + 'px';
+    return;
+  }
   const sens = 0.0025 * settings.sens;
   player.yaw -= e.movementX * sens;
   player.pitch -= e.movementY * sens;
@@ -1614,9 +1654,9 @@ function headPos() {
   return new THREE.Vector3(player.pos.x, player.pos.y + PLAYER_H - 0.15, player.pos.z);
 }
 
-function raycastVoxel(maxDist, origin) {
+function raycastVoxel(maxDist, origin, dirOverride) {
   const max = maxDist || REACH;
-  const dir = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
+  const dir = dirOverride || new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
   const pos = (origin || camera.position).clone();
   let x = Math.floor(pos.x), y = Math.floor(pos.y), z = Math.floor(pos.z);
   const stepX = Math.sign(dir.x), stepY = Math.sign(dir.y), stepZ = Math.sign(dir.z);
@@ -1712,10 +1752,11 @@ function stepPhysics(dt, canControl) {
     const B = settings.binds;
     const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
     const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-    if (keys[B.forward] || keys['ArrowUp']) move.add(fwd);
-    if (keys[B.back] || keys['ArrowDown']) move.sub(fwd);
-    if (keys[B.right] || keys['ArrowRight']) move.add(right);
-    if (keys[B.left] || keys['ArrowLeft']) move.sub(right);
+    // En 3e personne les flèches servent a orbiter la caméra, pas a bouger
+    if (keys[B.forward] || (!thirdPerson && keys['ArrowUp'])) move.add(fwd);
+    if (keys[B.back] || (!thirdPerson && keys['ArrowDown'])) move.sub(fwd);
+    if (keys[B.right] || (!thirdPerson && keys['ArrowRight'])) move.add(right);
+    if (keys[B.left] || (!thirdPerson && keys['ArrowLeft'])) move.sub(right);
     const sprintDown = keys[B.sprint] || (B.sprint.startsWith('Shift') && (keys['ShiftLeft'] || keys['ShiftRight']));
     if (move.lengthSq() > 0) move.normalize().multiplyScalar(SPEED * (sprintDown ? SPRINT_MULT : 1));
     if (keys[B.jump] && player.onGround) { player.vel.y = JUMP; player.onGround = false; }
@@ -1780,12 +1821,19 @@ function loop(now) {
     camera.rotation.x = t.pitch || 0;
   } else {
     if (spectating) setSpectating(false);
+    // Orbite de la caméra avec les flèches en 3e personne
+    if (thirdPerson && locked) {
+      if (keys['ArrowLeft']) orbitYaw += dt * 2.2;
+      if (keys['ArrowRight']) orbitYaw -= dt * 2.2;
+      if (keys['ArrowUp']) orbitPitch = Math.min(1.25, orbitPitch + dt * 1.8);
+      if (keys['ArrowDown']) orbitPitch = Math.max(-1.25, orbitPitch - dt * 1.8);
+    }
     camera.rotation.order = 'YXZ';
-    camera.rotation.y = player.yaw;
-    camera.rotation.x = player.pitch;
+    camera.rotation.y = thirdPerson ? player.yaw + orbitYaw : player.yaw;
+    camera.rotation.x = thirdPerson ? -orbitPitch : player.pitch;
     const head = headPos();
     if (thirdPerson) {
-      // Caméra derrière le joueur, rapprochée si un bloc gêne
+      // Caméra en orbite autour du joueur, rapprochée si un bloc gêne
       const dir = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
       let dist = 3.8;
       for (let t = 0.4; t <= 3.8; t += 0.15) {
