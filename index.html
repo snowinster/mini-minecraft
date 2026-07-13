@@ -30,6 +30,15 @@
     background: rgba(0,0,0,.45); padding: 8px 22px; border-radius: 6px; display: none; text-align: center;
   }
   #banner .sub { font-size: 13px; opacity: .85; }
+  #bigAlert {
+    position: fixed; top: 22%; left: 50%; transform: translateX(-50%);
+    color: #ffd94a; font-size: 34px; text-align: center; z-index: 11; display: none;
+    text-shadow: 0 0 10px #000; pointer-events: none;
+    animation: pulse 1s infinite;
+  }
+  #bigAlert .secs { font-size: 64px; color: #fff; }
+  #bigAlert .hint { font-size: 16px; color: #9fe870; }
+  @keyframes pulse { 50% { opacity: .75; } }
   #notif {
     position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
     color: #ffd94a; font-size: 16px; text-shadow: 0 0 5px #000; z-index: 10;
@@ -46,8 +55,11 @@
   }
   #gun .barrel { position: absolute; bottom: 55px; right: 30px; width: 26px; height: 90px; background: #333; border: 3px solid #111; border-radius: 4px 4px 0 0; transform: rotate(-12deg); }
   #gun .grip { position: absolute; bottom: 0; right: 44px; width: 32px; height: 70px; background: #6b4a2b; border: 3px solid #3d2a18; border-radius: 4px; transform: rotate(8deg); }
-  #gun.recoil { animation: recoil .12s; }
-  @keyframes recoil { 50% { transform: translateY(14px) } }
+  #flash {
+    position: fixed; bottom: 120px; right: 13%; width: 70px; height: 70px; z-index: 9; display: none;
+    background: radial-gradient(circle, #fff 0%, #ffd94a 40%, transparent 70%);
+    border-radius: 50%; pointer-events: none;
+  }
   #blind {
     position: fixed; inset: 0; background: #000; z-index: 15; display: none;
     align-items: center; justify-content: center; flex-direction: column; color: #fff; text-align: center;
@@ -92,10 +104,12 @@
 <div id="fps"></div>
 <div id="netstatus"></div>
 <div id="banner"></div>
+<div id="bigAlert"></div>
 <div id="notif"></div>
 <div id="povTag">👁 POV DU CHASSEUR - appuie sur V pour revenir</div>
 <div id="hud"></div>
 <div id="gun"><div class="barrel"></div><div class="grip"></div></div>
+<div id="flash"></div>
 <div id="blind"><h2>Les joueurs se cachent...</h2><div class="count">60</div><p>Tu es le CHASSEUR. Prépare-toi !</p></div>
 <div id="deadOverlay"><div>💀 Tu as été éliminé !</div></div>
 <div id="overlay">
@@ -216,20 +230,29 @@ function applyEdit(k, type, fromNetwork) {
   if (!fromNetwork) net.sendEdit(k, type);
 }
 
-// ---------- Génération ----------
-function hash(x, z) {
-  let h = Math.sin(x * 127.1 + z * 311.7) * 43758.5453;
-  return h - Math.floor(h);
+// ---------- Génération 100% déterministe ----------
+// Hash en arithmétique ENTIÈRE : résultat identique sur tous les
+// navigateurs et processeurs (Math.sin variait légèrement -> maps
+// différentes entre joueurs, c'était le bug de désynchronisation).
+function ihash(x, z, seed) {
+  let h = (x | 0) * 374761393 + (z | 0) * 668265263 + (seed | 0) * 1442695041;
+  h = (h ^ (h >>> 13)) | 0;
+  h = Math.imul(h, 1274126177);
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 4294967296; // [0, 1)
 }
-function noise(x, z) {
+
+function noise(x, z, seed) {
   const xi = Math.floor(x), zi = Math.floor(z);
   const xf = x - xi, zf = z - zi;
-  const a = hash(xi, zi), b = hash(xi + 1, zi), c = hash(xi, zi + 1), d = hash(xi + 1, zi + 1);
+  const a = ihash(xi, zi, seed), b = ihash(xi + 1, zi, seed),
+        c = ihash(xi, zi + 1, seed), d = ihash(xi + 1, zi + 1, seed);
   const u = xf * xf * (3 - 2 * xf), v = zf * zf * (3 - 2 * zf);
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
+
 function heightAt(x, z) {
-  return Math.floor(2 + noise(x / 9, z / 9) * 6 + noise(x / 23, z / 23) * 4);
+  return Math.floor(2 + noise(x / 9, z / 9, 1) * 6 + noise(x / 23, z / 23, 2) * 4);
 }
 
 function generateWorld() {
@@ -243,7 +266,8 @@ function generateWorld() {
       world.set(key(x, h - 2, z), 'dirt');
       world.set(key(x, h - 3, z), 'stone');
 
-      if (hash(x * 3.7, z * 5.1) > 0.985 && Math.abs(x) > 3 && Math.abs(z) > 3) {
+      // Arbres
+      if (ihash(x, z, 10) > 0.985 && Math.abs(x) > 3 && Math.abs(z) > 3) {
         const th = 4;
         for (let y = 1; y <= th; y++) world.set(key(x, h + y, z), 'wood');
         for (let dx = -2; dx <= 2; dx++)
@@ -252,23 +276,26 @@ function generateWorld() {
               if (Math.abs(dx) + Math.abs(dz) + Math.abs(dy - th) < 4 && !(dx === 0 && dz === 0 && dy <= th))
                 world.set(key(x + dx, h + dy, z + dz), 'leaf');
       }
-      if (hash(x * 7.3, z * 2.9) > 0.992) {
+      // Rochers
+      if (ihash(x, z, 11) > 0.992) {
         world.set(key(x, h + 1, z), 'stone');
         world.set(key(x + 1, h + 1, z), 'stone');
-        if (hash(x * 1.1, z * 9.7) > 0.5) world.set(key(x, h + 2, z), 'stone');
-        if (hash(x * 5.3, z * 3.3) > 0.5) world.set(key(x, h + 1, z + 1), 'stone');
+        if (ihash(x, z, 12) > 0.5) world.set(key(x, h + 2, z), 'stone');
+        if (ihash(x, z, 13) > 0.5) world.set(key(x, h + 1, z + 1), 'stone');
       }
-      if (hash(x * 1.9, z * 8.3) > 0.975) {
+      // Buissons
+      if (ihash(x, z, 14) > 0.975) {
         world.set(key(x, h + 1, z), 'leaf');
-        if (hash(x * 6.1, z * 1.7) > 0.6) world.set(key(x + 1, h + 1, z), 'leaf');
+        if (ihash(x, z, 15) > 0.6) world.set(key(x + 1, h + 1, z), 'leaf');
       }
-      if (hash(x * 4.1, z * 6.7) > 0.9965 && Math.abs(x) < half - 4 && Math.abs(z) < half - 4) {
-        const horiz = hash(x * 2.2, z * 4.4) > 0.5;
+      // Murets en ruine
+      if (ihash(x, z, 16) > 0.9965 && Math.abs(x) < half - 4 && Math.abs(z) < half - 4) {
+        const horiz = ihash(x, z, 17) > 0.5;
         for (let i = 0; i < 4; i++) {
           const wx = x + (horiz ? i : 0), wz = z + (horiz ? 0 : i);
           const wh = heightAt(wx, wz);
           world.set(key(wx, wh + 1, wz), 'wood');
-          if (hash(wx * 3.9, wz * 7.1) > 0.35) world.set(key(wx, wh + 2, wz), 'wood');
+          if (ihash(wx, wz, 18) > 0.35) world.set(key(wx, wh + 2, wz), 'wood');
         }
       }
     }
@@ -295,6 +322,28 @@ function makePlayerMesh(colorIdx) {
   return g;
 }
 
+// Fusil visible dans les mains du chasseur (pour les autres joueurs)
+function makeGunMesh() {
+  const g = new THREE.Group();
+  g.name = 'huntergun';
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.75), new THREE.MeshLambertMaterial({ color: 0x222222 }));
+  barrel.position.set(0, 0, -0.3);
+  const stock = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.18, 0.3), new THREE.MeshLambertMaterial({ color: 0x6b4a2b }));
+  stock.position.set(0, -0.05, 0.15);
+  g.add(barrel, stock);
+  g.position.set(0.32, 1.05, -0.25);
+  return g;
+}
+
+function updateHunterModels() {
+  for (const [id, r] of remotePlayers) {
+    const existing = r.group.getObjectByName('huntergun');
+    const shouldHave = game.mode === 'hide' && id === game.hunterId;
+    if (shouldHave && !existing) r.group.add(makeGunMesh());
+    if (!shouldHave && existing) r.group.remove(existing);
+  }
+}
+
 function ensureRemote(id, colorIdx) {
   if (remotePlayers.has(id)) return remotePlayers.get(id);
   const group = makePlayerMesh(colorIdx);
@@ -302,11 +351,40 @@ function ensureRemote(id, colorIdx) {
   const r = { group, target: { x: 0, y: -100, z: 0, yaw: 0, pitch: 0 } };
   remotePlayers.set(id, r);
   updateNetStatus();
+  updateHunterModels();
   return r;
 }
 function removeRemote(id) {
   const r = remotePlayers.get(id);
   if (r) { scene.remove(r.group); remotePlayers.delete(id); updateNetStatus(); }
+}
+
+// ---------- Animation de tir (hitscan, sans recul) ----------
+function showTracer(a, b) {
+  const lineGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(a[0], a[1], a[2]),
+    new THREE.Vector3(b[0], b[1], b[2]),
+  ]);
+  const lineMat = new THREE.LineBasicMaterial({ color: 0xffee66 });
+  const line = new THREE.Line(lineGeo, lineMat);
+  scene.add(line);
+
+  const impactGeo = new THREE.SphereGeometry(0.12, 6, 6);
+  const impactMat = new THREE.MeshBasicMaterial({ color: 0xffdd44 });
+  const impact = new THREE.Mesh(impactGeo, impactMat);
+  impact.position.set(b[0], b[1], b[2]);
+  scene.add(impact);
+
+  setTimeout(() => {
+    scene.remove(line); lineGeo.dispose(); lineMat.dispose();
+    scene.remove(impact); impactGeo.dispose(); impactMat.dispose();
+  }, 130);
+}
+
+const flashEl = document.getElementById('flash');
+function muzzleFlash() {
+  flashEl.style.display = 'block';
+  setTimeout(() => flashEl.style.display = 'none', 80);
 }
 
 // ---------- Cache-cache ----------
@@ -316,8 +394,10 @@ const game = {
   timers: [], scoreInterval: null, readySet: new Set(),
 };
 let spectating = false;
+let hunterPtsBuffer = 0;
 
 const banner = document.getElementById('banner');
+const bigAlert = document.getElementById('bigAlert');
 const notif = document.getElementById('notif');
 const blind = document.getElementById('blind');
 const gunEl = document.getElementById('gun');
@@ -362,11 +442,10 @@ function startHideSeek(hunterId, hiders) {
   deadOverlay.style.display = 'none';
   resultBox.style.display = 'none';
   setSpectating(false);
+  updateHunterModels();
 
   if (isHunter()) {
     blind.style.display = 'flex';
-  } else {
-    showNotif('Tu es CACHÉ ! Pose des blocs pour te planquer. R quand tu es prêt.', 5000);
   }
   banner.style.display = 'block';
   updateGameUI();
@@ -377,6 +456,7 @@ function startHunting() {
   game.phase = 'hunting';
   game.phaseEnd = Date.now() + HUNT_SECS * 1000;
   blind.style.display = 'none';
+  bigAlert.style.display = 'none';
   if (isHunter()) {
     gunEl.style.display = 'block';
     crosshairEl.classList.add('gun');
@@ -394,10 +474,12 @@ function endHideSeek(who, scores) {
   gunEl.style.display = 'none';
   crosshairEl.classList.remove('gun');
   blind.style.display = 'none';
+  bigAlert.style.display = 'none';
   deadOverlay.style.display = 'none';
   banner.style.display = 'none';
   game.dead = false;
   setSpectating(false);
+  updateHunterModels();
 
   let html = `<div class="win">${who === 'hunter' ? '🔫 LE CHASSEUR A GAGNÉ !' : '🌿 LES CACHÉS ONT GAGNÉ !'}</div>`;
   const entries = Object.entries(scores || {});
@@ -413,7 +495,7 @@ function endHideSeek(who, scores) {
   document.exitPointerLock();
 }
 
-// --- côté hôte : lancement et déroulé ---
+// --- côté hôte ---
 function hostStartHunting() {
   clearGameTimers();
   net.broadcast({ t: 'hs_phase' }, null);
@@ -469,9 +551,8 @@ function getPlayerPos(id) {
   return r ? r.target : null;
 }
 
-// Côté chasseur, les alertes sont regroupées et affichées toutes les 15 s
-// pour ne pas lui révéler la position du caché en temps réel.
-let hunterPtsBuffer = 0;
+// Chasseur : bilan différé toutes les 15 s (pour ne pas trahir la
+// position en temps réel). Caché : notification en direct.
 function onScore(id, total) {
   if (game.hunterId === myId()) {
     hunterPtsBuffer++;
@@ -499,13 +580,20 @@ function onDead(id) {
 }
 
 function updateGameUI() {
-  if (game.mode !== 'hide') { banner.style.display = 'none'; return; }
+  if (game.mode !== 'hide') { banner.style.display = 'none'; bigAlert.style.display = 'none'; return; }
   const remain = Math.max(0, Math.ceil((game.phaseEnd - Date.now()) / 1000));
   const mm = Math.floor(remain / 60), ss = String(remain % 60).padStart(2, '0');
   if (game.phase === 'hiding') {
-    banner.innerHTML = `🙈 CACHE-TOI ! <b>${mm}:${ss}</b><div class="sub">${isHunter() ? 'Tu es le chasseur, patience...' : 'R = je suis prêt | Pose des blocs (rien casser !)'}</div>`;
+    banner.innerHTML = `🙈 PHASE DE CACHETTE <b>${mm}:${ss}</b>`;
     blind.querySelector('.count').textContent = remain;
+    if (!isHunter() && !game.dead) {
+      bigAlert.style.display = 'block';
+      bigAlert.innerHTML = `🙈 CACHE-TOI !<br><span class="secs">${remain}</span><br><span class="hint">Appuie sur R dès que tu es caché pour lancer la chasse plus tôt</span>`;
+    } else {
+      bigAlert.style.display = 'none';
+    }
   } else if (game.phase === 'hunting') {
+    bigAlert.style.display = 'none';
     const me = game.scores[myId()];
     banner.innerHTML = `🔫 CHASSE EN COURS <b>${mm}:${ss}</b><div class="sub">${isHunter() ? 'Trouve et tire sur les joueurs cachés !' : (game.dead ? 'Éliminé - V pour voir le chasseur' : 'Points : ' + (me || 0) + ' | V = POV chasseur')}</div>`;
   }
@@ -514,9 +602,7 @@ setInterval(updateGameUI, 250);
 
 // ---------- Tir ----------
 function shoot() {
-  gunEl.classList.remove('recoil');
-  void gunEl.offsetWidth;
-  gunEl.classList.add('recoil');
+  muzzleFlash();
 
   const dir = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
   const origin = camera.position.clone();
@@ -535,6 +621,18 @@ function shoot() {
       best = id; bestT = t;
     }
   }
+
+  // point d'arrivée du rayon : joueur touché > bloc > portée max
+  const endT = best ? bestT : Math.min(blockDist, GUN_RANGE);
+  const end = origin.clone().add(dir.clone().multiplyScalar(endT));
+  // départ visuel : légèrement décalé vers le bas-droite (canon du fusil)
+  const right = new THREE.Vector3(-Math.cos(player.yaw), 0, Math.sin(player.yaw));
+  const start = origin.clone().add(right.multiplyScalar(0.25)).add(new THREE.Vector3(0, -0.2, 0)).add(dir.clone().multiplyScalar(0.4));
+
+  const a = [start.x, start.y, start.z], b = [end.x, end.y, end.z];
+  showTracer(a, b);
+  net.broadcast({ t: 'hs_shot', a, b }, null);
+
   if (best) {
     net.broadcast({ t: 'hs_dead', id: best }, null);
     onDead(best);
@@ -621,6 +719,8 @@ const net = {
     } else if (d.t === 'hs_score') {
       game.scores[d.id] = d.total;
       onScore(d.id, d.total);
+    } else if (d.t === 'hs_shot') {
+      showTracer(d.a, d.b);
     } else if (d.t === 'hs_dead') {
       onDead(d.id);
     } else if (d.t === 'hs_win') {
@@ -744,13 +844,11 @@ document.addEventListener('keydown', e => {
     const n = parseInt(e.code.slice(5)) - 1;
     if (n >= 0 && n < PLACEABLE.length) { selected = n; updateHud(); }
   }
-  // R = prêt (cachés, pendant la phase de cachette)
   if (e.code === 'KeyR' && game.mode === 'hide' && game.phase === 'hiding' && !isHunter() && !game.dead) {
     if (net.isHost) hostMarkReady(myId());
     else net.broadcast({ t: 'hs_ready', id: myId() }, null);
     showNotif('✔ Tu es prêt !', 1500);
   }
-  // V = POV du chasseur (cachés et éliminés)
   if (e.code === 'KeyV' && game.mode === 'hide' && !isHunter()) {
     setSpectating(!spectating);
     if (!spectating && !remotePlayers.has(game.hunterId)) showNotif('Chasseur introuvable pour le moment', 1500);
@@ -788,7 +886,6 @@ document.addEventListener('mousedown', e => {
   if (!locked || game.dead || spectating) return;
   if (isHunter() && game.phase === 'hiding') return;
 
-  // le chasseur tire, il ne modifie pas la map
   if (isHunter()) {
     if (game.phase === 'hunting' && e.button === 0) shoot();
     return;
@@ -798,7 +895,6 @@ document.addEventListener('mousedown', e => {
   if (!hit) return;
 
   if (e.button === 0) {
-    // en cache-cache, les cachés ne peuvent RIEN casser
     if (game.mode === 'hide') {
       showNotif('Impossible de casser des blocs en cache-cache !', 1500);
       return;
@@ -875,7 +971,6 @@ function loop(now) {
     if (p.y < -20) { p.set(0.5, heightAt(0, 0) + 3, 0.5); player.vel.set(0, 0, 0); }
   }
 
-  // caméra : vue normale ou POV du chasseur
   const hunterRemote = spectating ? remotePlayers.get(game.hunterId) : null;
   if (hunterRemote) {
     const t = hunterRemote.target;
