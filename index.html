@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Mini Minecraft - Cache-cache</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; background: #000; font-family: 'Courier New', monospace; }
@@ -149,6 +150,27 @@
     width: 3px; height: 3px; background: #fff; border-radius: 50%;
     transform: translate(-50%, -50%);
   }
+  /* ---------- Contrôles tactiles (mobile) ---------- */
+  canvas { touch-action: none; }
+  #touchUI { display: none; }
+  #touchUI .tbtn {
+    position: fixed; width: 54px; height: 54px; border-radius: 50%;
+    background: rgba(0,0,0,.45); border: 2px solid rgba(255,255,255,.5);
+    color: #fff; font-size: 22px; z-index: 13; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    -webkit-user-select: none; user-select: none; touch-action: none;
+  }
+  #touchUI .tbtn.armed { border-color: #ffd94a; background: rgba(255,217,74,.35); }
+  #joyBase {
+    position: fixed; left: 22px; bottom: 88px; width: 130px; height: 130px;
+    border-radius: 50%; background: rgba(255,255,255,.08);
+    border: 2px solid rgba(255,255,255,.35); z-index: 13; touch-action: none;
+  }
+  #joyKnob {
+    position: absolute; left: 50%; top: 50%; width: 54px; height: 54px;
+    margin: -27px 0 0 -27px; border-radius: 50%; background: rgba(255,255,255,.45);
+    pointer-events: none;
+  }
   #joinRow { display: none; gap: 8px; align-items: center; }
   #joinRow .btn { width: auto; min-width: 90px; margin: 0; }
   #roomInfo {
@@ -208,8 +230,22 @@
 <div id="flash"></div>
 <div id="vignette"></div>
 <div id="ammo"></div>
-<div id="paintInfo"><span class="pc" id="paintSwatch"></span>Clic G : peindre &nbsp;|&nbsp; Clic D : pipette &nbsp;|&nbsp; Clic molette : tourner &nbsp;|&nbsp; Molette : zoom &nbsp;|&nbsp; P : sortir</div>
+<div id="paintInfo"><span class="pc" id="paintSwatch"></span><span id="paintHint">Clic G : peindre &nbsp;|&nbsp; Clic D : pipette &nbsp;|&nbsp; Clic molette : tourner &nbsp;|&nbsp; Molette : zoom &nbsp;|&nbsp; P : sortir</span></div>
 <div id="paintCursor"></div>
+<div id="touchUI">
+  <div id="joyBase"><div id="joyKnob"></div></div>
+  <button class="tbtn" id="tJump" style="right:20px;bottom:96px;width:64px;height:64px;font-size:30px">⤒</button>
+  <button class="tbtn" id="tShoot" style="right:100px;bottom:118px">🔫</button>
+  <button class="tbtn" id="tBreak" style="right:28px;bottom:184px">⛏️</button>
+  <button class="tbtn" id="tPlace" style="right:96px;bottom:212px">🧱</button>
+  <button class="tbtn" id="tPipette" style="right:100px;bottom:118px">💉</button>
+  <button class="tbtn" id="tView" style="right:16px;top:86px">📷</button>
+  <button class="tbtn" id="tPaint" style="right:16px;top:148px">🎨</button>
+  <button class="tbtn" id="tDecoy" style="right:16px;top:210px">🎭</button>
+  <button class="tbtn" id="tPov" style="right:16px;top:272px">👁</button>
+  <button class="tbtn" id="tReady" style="right:16px;top:334px">✔</button>
+  <button class="tbtn" id="tMenu" style="right:16px;top:16px">☰</button>
+</div>
 <div id="blind"><h2>Les joueurs se cachent...</h2><div class="count">60</div><p>Tu es le CHASSEUR. Prépare-toi !</p></div>
 <div id="deadOverlay"><div>💀 Tu as été éliminé !</div></div>
 
@@ -1765,16 +1801,27 @@ document.getElementById('joinGo').onclick = () => {
   });
 };
 
+// Sur mobile il n'y a pas de pointer lock : on gère l'état "en jeu" a la main
+function enterWorld() {
+  if (matchMedia('(pointer: coarse)').matches) {
+    locked = true;
+    overlay.style.display = 'none';
+    ac();
+  } else {
+    renderer.domElement.requestPointerLock();
+  }
+}
+
 document.getElementById('hideSeekBtn').onclick = () => {
   hostLaunchHideSeek('classic');
-  if (game.mode === 'hide') renderer.domElement.requestPointerLock();
+  if (game.mode === 'hide') enterWorld();
 };
 document.getElementById('chatBtn').onclick = () => {
   hostLaunchHideSeek('convert');
-  if (game.mode === 'hide') renderer.domElement.requestPointerLock();
+  if (game.mode === 'hide') enterWorld();
 };
 
-playBtn.onclick = () => renderer.domElement.requestPointerLock();
+playBtn.onclick = () => enterWorld();
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
   overlay.style.display = locked ? 'none' : 'flex';
@@ -1856,6 +1903,193 @@ document.addEventListener('wheel', e => {
   selected = (selected + (e.deltaY > 0 ? 1 : -1) + PLACEABLE.length) % PLACEABLE.length;
   updateHud();
 });
+
+// ---------- Contrôles tactiles (mobile) ----------
+const IS_TOUCH = matchMedia('(pointer: coarse)').matches;
+const touchMove = { x: 0, y: 0 };
+let touchSprint = false, touchJumpQueued = false, pipetteArmed = false;
+
+if (IS_TOUCH) {
+  const $ = id => document.getElementById(id);
+  const touchUI = $('touchUI');
+  const clampNum = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  $('paintHint').textContent = 'Doigt : peindre | 2 doigts : tourner / zoomer | 💉 puis touche un bloc : pipette';
+
+  // Joystick de déplacement (pousser a fond = sprint)
+  const joyBase = $('joyBase'), joyKnob = $('joyKnob');
+  let joyId = null;
+  function handleJoy(t) {
+    const rect = joyBase.getBoundingClientRect();
+    let dx = (t.clientX - rect.left - rect.width / 2) / (rect.width / 2);
+    let dy = (t.clientY - rect.top - rect.height / 2) / (rect.height / 2);
+    const m = Math.hypot(dx, dy);
+    if (m > 1) { dx /= m; dy /= m; }
+    touchMove.x = dx;
+    touchMove.y = dy;
+    touchSprint = m > 0.92;
+    joyKnob.style.transform = `translate(${dx * 38}px, ${dy * 38}px)`;
+  }
+  joyBase.addEventListener('touchstart', e => {
+    e.preventDefault();
+    joyId = e.changedTouches[0].identifier;
+    handleJoy(e.changedTouches[0]);
+  }, { passive: false });
+  joyBase.addEventListener('touchmove', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) if (t.identifier === joyId) handleJoy(t);
+  }, { passive: false });
+  const endJoy = e => {
+    for (const t of e.changedTouches) if (t.identifier === joyId) {
+      joyId = null;
+      touchMove.x = touchMove.y = 0;
+      touchSprint = false;
+      joyKnob.style.transform = 'translate(0px, 0px)';
+    }
+  };
+  joyBase.addEventListener('touchend', endJoy);
+  joyBase.addEventListener('touchcancel', endJoy);
+
+  // Sur le canvas : regard (1 doigt) ou peinture (1 doigt) / orbite+zoom (2 doigts)
+  const cv = renderer.domElement;
+  let lookId = null, lookLast = null;
+  let paintTouchId = null, pinchDist = null, pinchMid = null;
+  const tDist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  const tMid = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 });
+  function setCursor(x, y) {
+    cursorX = x;
+    cursorY = y;
+    paintCursorEl.style.left = x + 'px';
+    paintCursorEl.style.top = y + 'px';
+  }
+
+  cv.addEventListener('touchstart', e => {
+    if (!locked) return;
+    e.preventDefault();
+    if (paintMode) {
+      if (e.touches.length >= 2) {
+        paintTouchId = null;
+        pinchDist = tDist(e.touches[0], e.touches[1]);
+        pinchMid = tMid(e.touches[0], e.touches[1]);
+      } else {
+        const t = e.touches[0];
+        paintTouchId = t.identifier;
+        setCursor(t.clientX, t.clientY);
+        if (pipetteArmed) {
+          pickColor();
+          pipetteArmed = false;
+          $('tPipette').classList.remove('armed');
+        } else {
+          paintSelf(true);
+        }
+      }
+      return;
+    }
+    const t = e.changedTouches[0];
+    if (lookId === null) { lookId = t.identifier; lookLast = { x: t.clientX, y: t.clientY }; }
+  }, { passive: false });
+
+  cv.addEventListener('touchmove', e => {
+    if (!locked) return;
+    e.preventDefault();
+    if (paintMode) {
+      if (e.touches.length >= 2 && pinchDist !== null) {
+        const d = tDist(e.touches[0], e.touches[1]);
+        const m = tMid(e.touches[0], e.touches[1]);
+        paintDist = clampNum(paintDist - (d - pinchDist) * 0.01, 0.6, 5);
+        orbitYaw -= (m.x - pinchMid.x) * 0.008;
+        orbitPitch = clampNum(orbitPitch - (m.y - pinchMid.y) * 0.008, -1.25, 1.25);
+        pinchDist = d;
+        pinchMid = m;
+      } else if (paintTouchId !== null) {
+        for (const t of e.changedTouches) if (t.identifier === paintTouchId) {
+          setCursor(t.clientX, t.clientY);
+          if (!pipetteArmed) paintSelf(true);
+        }
+      }
+      return;
+    }
+    if (spectating || (isHunter() && game.phase === 'hiding')) return;
+    for (const t of e.changedTouches) if (t.identifier === lookId) {
+      const sens = 0.005 * settings.sens;
+      player.yaw -= (t.clientX - lookLast.x) * sens;
+      player.pitch = clampNum(player.pitch - (t.clientY - lookLast.y) * sens, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01);
+      lookLast = { x: t.clientX, y: t.clientY };
+    }
+  }, { passive: false });
+
+  const endCanvasTouch = e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === lookId) lookId = null;
+      if (t.identifier === paintTouchId) paintTouchId = null;
+    }
+    if (e.touches.length < 2) { pinchDist = null; pinchMid = null; }
+  };
+  cv.addEventListener('touchend', endCanvasTouch);
+  cv.addEventListener('touchcancel', endCanvasTouch);
+
+  // Boutons d'action
+  function bindBtn(el, fn) {
+    el.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); fn(); }, { passive: false });
+  }
+  bindBtn($('tJump'), () => { touchJumpQueued = true; });
+  bindBtn($('tShoot'), () => { if (isHunter() && game.phase === 'hunting' && locked) shoot(); });
+  bindBtn($('tBreak'), () => touchEditBlock(false));
+  bindBtn($('tPlace'), () => touchEditBlock(true));
+  bindBtn($('tPaint'), () => { if (!isHunter() && !game.dead && !spectating) setPaintMode(!paintMode); });
+  bindBtn($('tView'), () => { if (!(isHunter() && game.phase === 'hunting')) setThirdPerson(!thirdPerson); });
+  bindBtn($('tDecoy'), () => placeDecoy());
+  bindBtn($('tPov'), () => { if (game.mode === 'hide' && !isHunter()) setSpectating(!spectating); });
+  bindBtn($('tReady'), () => {
+    if (game.mode === 'hide' && game.phase === 'hiding' && !isHunter() && !game.dead) {
+      if (net.isHost) hostMarkReady(myId());
+      else net.broadcast({ t: 'hs_ready', id: myId() }, null);
+      showNotif('✔ Tu es prêt !', 1500);
+    }
+  });
+  bindBtn($('tPipette'), () => {
+    pipetteArmed = !pipetteArmed;
+    $('tPipette').classList.toggle('armed', pipetteArmed);
+    showNotif(pipetteArmed ? '💉 Touche un bloc pour prendre sa couleur' : 'Pipette annulée', 1500);
+  });
+  bindBtn($('tMenu'), () => { locked = false; overlay.style.display = 'flex'; });
+
+  function touchEditBlock(place) {
+    if (!locked || game.mode === 'hide' || isHunter() || paintMode) return;
+    const hit = raycastVoxel(REACH, thirdPerson ? headPos() : null);
+    if (!hit) return;
+    if (place) {
+      const nx = hit.x + hit.face[0], ny = hit.y + hit.face[1], nz = hit.z + hit.face[2];
+      const p = player.pos;
+      const inPlayer = Math.floor(p.x) === nx && Math.floor(p.z) === nz &&
+                       (Math.floor(p.y) === ny || Math.floor(p.y + 1) === ny);
+      if (!inPlayer) { applyEdit(key(nx, ny, nz), PLACEABLE[selected], false); sfx.place(); }
+    } else {
+      applyEdit(key(hit.x, hit.y, hit.z), null, false);
+      sfx.break();
+    }
+  }
+
+  // Affiche / masque les boutons selon le contexte de jeu
+  const showEl = (el, on) => el.style.display = on ? 'flex' : 'none';
+  function updateTouchUI() {
+    touchUI.style.display = locked ? 'block' : 'none';
+    if (!locked) return;
+    const hunter = isHunter(), inHide = game.mode === 'hide';
+    showEl(joyBase, !paintMode);
+    showEl($('tJump'), !paintMode);
+    showEl($('tShoot'), !paintMode && hunter && game.phase === 'hunting');
+    showEl($('tBreak'), !paintMode && !inHide && !hunter);
+    showEl($('tPlace'), !paintMode && !inHide && !hunter);
+    showEl($('tPipette'), paintMode);
+    showEl($('tView'), !(hunter && game.phase === 'hunting'));
+    showEl($('tPaint'), !hunter && !game.dead);
+    showEl($('tDecoy'), inHide && !hunter && !game.dead && !decoyUsed);
+    showEl($('tPov'), inHide && !hunter);
+    showEl($('tReady'), inHide && game.phase === 'hiding' && !hunter && !game.dead);
+  }
+  setInterval(updateTouchUI, 300);
+}
 
 // ---------- Raycast voxel ----------
 // En 3e personne, on vise depuis la tête du joueur (pas depuis la caméra
@@ -1970,10 +2204,16 @@ function stepPhysics(dt, canControl) {
     if (keys[B.back] || (!paintMode && keys['ArrowDown'])) move.sub(fwd);
     if (keys[B.right] || (!paintMode && keys['ArrowRight'])) move.add(right);
     if (keys[B.left] || (!paintMode && keys['ArrowLeft'])) move.sub(right);
-    const sprintDown = keys[B.sprint] || (B.sprint.startsWith('Shift') && (keys['ShiftLeft'] || keys['ShiftRight']));
+    // Joystick tactile (pousser a fond = sprint)
+    if (touchMove.x || touchMove.y) {
+      move.add(fwd.clone().multiplyScalar(-touchMove.y));
+      move.add(right.clone().multiplyScalar(touchMove.x));
+    }
+    const sprintDown = keys[B.sprint] || touchSprint || (B.sprint.startsWith('Shift') && (keys['ShiftLeft'] || keys['ShiftRight']));
     if (move.lengthSq() > 0) move.normalize().multiplyScalar(SPEED * (sprintDown ? SPRINT_MULT : 1));
-    if (keys[B.jump] && player.onGround) { player.vel.y = JUMP; player.onGround = false; }
+    if ((keys[B.jump] || touchJumpQueued) && player.onGround) { player.vel.y = JUMP; player.onGround = false; }
   }
+  touchJumpQueued = false;
   player.vel.x = move.x;
   player.vel.z = move.z;
   player.vel.y -= GRAVITY * dt;
