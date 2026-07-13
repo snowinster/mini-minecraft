@@ -1017,8 +1017,10 @@ function cursorNDC() {
 // et glisser pour peindre en continu (quiet = pas de notif pendant le glissé).
 let paintDragging = false;
 let orbitDragging = false; // clic molette maintenu = orbite autour du perso
-function paintSelf(quiet) {
-  paintRaycaster.setFromCamera(cursorNDC(), camera);
+let lastStrokeX = null, lastStrokeY = null; // dernier point du trait en cours
+
+function paintAtScreen(x, y, quiet) {
+  paintRaycaster.setFromCamera({ x: (x / innerWidth) * 2 - 1, y: -(y / innerHeight) * 2 + 1 }, camera);
   const hits = paintRaycaster.intersectObject(selfMesh, true);
   const hit = hits.find(h => h.object.userData.paint && h.uv);
   if (!hit) {
@@ -1035,6 +1037,21 @@ function paintSelf(quiet) {
   p.tex.needsUpdate = true;
   mySkin[name][py * SKIN_RES + px] = paintColor;
   queueSkinSync();
+}
+
+function paintSelf(quiet) { paintAtScreen(cursorX, cursorY, quiet); }
+
+// Trait continu : on peint tous les ~3 px le long du trajet entre deux
+// positions, sinon un geste rapide saute des pixels et laisse des trous.
+function strokeTo(x, y) {
+  if (lastStrokeX === null) { lastStrokeX = x; lastStrokeY = y; }
+  const d = Math.hypot(x - lastStrokeX, y - lastStrokeY);
+  const steps = Math.min(40, Math.max(1, Math.ceil(d / 3)));
+  for (let i = 1; i <= steps; i++) {
+    paintAtScreen(lastStrokeX + (x - lastStrokeX) * i / steps, lastStrokeY + (y - lastStrokeY) * i / steps, true);
+  }
+  lastStrokeX = x;
+  lastStrokeY = y;
 }
 
 // Pipette au pixel près : prélève la couleur EXACTE du pixel de texture
@@ -1848,7 +1865,7 @@ document.addEventListener('mousemove', e => {
     cursorY = Math.max(0, Math.min(innerHeight, cursorY + e.movementY));
     paintCursorEl.style.left = cursorX + 'px';
     paintCursorEl.style.top = cursorY + 'px';
-    if (paintDragging) paintSelf(true); // clic maintenu = on peint en glissant
+    if (paintDragging) strokeTo(cursorX, cursorY); // clic maintenu = trait continu
     return;
   }
   const sens = 0.0025 * settings.sens;
@@ -1980,6 +1997,8 @@ if (IS_TOUCH) {
           pipetteArmed = false;
           $('tPipette').classList.remove('armed');
         } else {
+          lastStrokeX = t.clientX;
+          lastStrokeY = t.clientY;
           paintSelf(true);
         }
       }
@@ -2004,7 +2023,7 @@ if (IS_TOUCH) {
       } else if (paintTouchId !== null) {
         for (const t of e.changedTouches) if (t.identifier === paintTouchId) {
           setCursor(t.clientX, t.clientY);
-          if (!pipetteArmed) paintSelf(true);
+          if (!pipetteArmed) strokeTo(t.clientX, t.clientY); // trait continu au doigt
         }
       }
       return;
@@ -2021,7 +2040,7 @@ if (IS_TOUCH) {
   const endCanvasTouch = e => {
     for (const t of e.changedTouches) {
       if (t.identifier === lookId) lookId = null;
-      if (t.identifier === paintTouchId) paintTouchId = null;
+      if (t.identifier === paintTouchId) { paintTouchId = null; lastStrokeX = lastStrokeY = null; }
     }
     if (e.touches.length < 2) { pinchDist = null; pinchMid = null; }
   };
@@ -2138,7 +2157,7 @@ document.addEventListener('mousedown', e => {
 
   // Mode atelier : peindre son perso / orbiter / pipette
   if (paintMode) {
-    if (e.button === 0) { paintDragging = true; paintSelf(); }
+    if (e.button === 0) { paintDragging = true; lastStrokeX = cursorX; lastStrokeY = cursorY; paintSelf(); }
     else if (e.button === 1) { e.preventDefault(); orbitDragging = true; }
     else if (e.button === 2) pickColor();
     return;
@@ -2167,7 +2186,11 @@ document.addEventListener('mousedown', e => {
     }
   }
 });
-document.addEventListener('mouseup', () => { paintDragging = false; orbitDragging = false; });
+document.addEventListener('mouseup', () => {
+  paintDragging = false;
+  orbitDragging = false;
+  lastStrokeX = lastStrokeY = null;
+});
 document.addEventListener('contextmenu', e => e.preventDefault());
 
 // ---------- HUD ----------
