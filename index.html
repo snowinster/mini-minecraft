@@ -729,25 +729,27 @@ const remotePlayers = new Map();
 
 function cssColor(c) { return '#' + (c >>> 0).toString(16).padStart(6, '0'); }
 
-// Chaque partie du corps porte une petite texture 8x8 peignable pixel
-// par pixel (camouflage en temps réel via la vue 3e personne).
+// Chaque partie du corps porte 6 textures 8x8 (une PAR FACE) peignables
+// pixel par pixel : peindre le devant ne touche jamais le dos ou le dessous.
 const SKIN_RES = 8;
 function makePaintablePart(sx, sy, sz, baseColor, partName) {
-  const canvas = document.createElement('canvas');
-  canvas.width = SKIN_RES;
-  canvas.height = SKIN_RES;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = cssColor(baseColor);
-  ctx.fillRect(0, 0, SKIN_RES, SKIN_RES);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  tex.generateMipmaps = false;
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(sx, sy, sz),
-    new THREE.MeshLambertMaterial({ map: tex })
-  );
-  mesh.userData.paint = { canvas, ctx, tex };
+  const mats = [];
+  for (let f = 0; f < 6; f++) {
+    const canvas = document.createElement('canvas');
+    canvas.width = SKIN_RES;
+    canvas.height = SKIN_RES;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = cssColor(baseColor);
+    ctx.fillRect(0, 0, SKIN_RES, SKIN_RES);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    const mat = new THREE.MeshLambertMaterial({ map: tex });
+    mat.userData = { canvas, ctx, tex };
+    mats.push(mat);
+  }
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mats);
   mesh.userData.partName = partName;
   return mesh;
 }
@@ -791,29 +793,48 @@ function defaultSkin(base) {
   const s = {};
   for (const n of SKIN_PARTS) {
     const c = n === 'head' ? 0xffd9b3 : (n.endsWith('Leg') ? dark : base);
-    s[n] = new Array(SKIN_RES * SKIN_RES).fill(c);
+    s[n] = Array.from({ length: 6 }, () => new Array(SKIN_RES * SKIN_RES).fill(c));
   }
   return s;
 }
 
-let mySkin;
-try { mySkin = JSON.parse(localStorage.getItem('mmc_skin') || 'null'); } catch (e) { mySkin = null; }
-if (!mySkin || !SKIN_PARTS.every(n => Array.isArray(mySkin[n]) && mySkin[n].length === SKIN_RES * SKIN_RES)) {
-  mySkin = defaultSkin(myColorHex);
+// Valide un skin reçu / chargé, et convertit l'ancien format (une seule
+// texture partagée par les 6 faces) vers le nouveau (une par face).
+function normalizeSkin(s) {
+  if (!s) return null;
+  const out = {};
+  for (const n of SKIN_PARTS) {
+    const v = s[n];
+    if (Array.isArray(v) && v.length === 6 && v.every(f => Array.isArray(f) && f.length === SKIN_RES * SKIN_RES)) {
+      out[n] = v;
+    } else if (Array.isArray(v) && v.length === SKIN_RES * SKIN_RES && typeof v[0] === 'number') {
+      out[n] = Array.from({ length: 6 }, () => v.slice());
+    } else {
+      return null;
+    }
+  }
+  return out;
 }
 
+let mySkin;
+try { mySkin = normalizeSkin(JSON.parse(localStorage.getItem('mmc_skin') || 'null')); } catch (e) { mySkin = null; }
+if (!mySkin) mySkin = defaultSkin(myColorHex);
+
 function applySkin(group, skin) {
-  if (!skin) return;
+  const norm = normalizeSkin(skin);
+  if (!norm) return;
   const parts = group.userData.parts || {};
   for (const name of SKIN_PARTS) {
-    const mesh = parts[name], arr = skin[name];
-    if (!mesh || !arr) continue;
-    const p = mesh.userData.paint;
-    for (let i = 0; i < arr.length; i++) {
-      p.ctx.fillStyle = cssColor(arr[i] || 0);
-      p.ctx.fillRect(i % SKIN_RES, Math.floor(i / SKIN_RES), 1, 1);
+    const mesh = parts[name], faces = norm[name];
+    if (!mesh) continue;
+    for (let f = 0; f < 6; f++) {
+      const p = mesh.material[f].userData, arr = faces[f];
+      for (let i = 0; i < arr.length; i++) {
+        p.ctx.fillStyle = cssColor(arr[i] || 0);
+        p.ctx.fillRect(i % SKIN_RES, Math.floor(i / SKIN_RES), 1, 1);
+      }
+      p.tex.needsUpdate = true;
     }
-    p.tex.needsUpdate = true;
   }
 }
 
@@ -1019,24 +1040,28 @@ function cursorNDC() {
 let paintDragging = false;
 let orbitDragging = false; // clic molette maintenu = orbite autour du perso
 let lastStrokeX = null, lastStrokeY = null; // dernier point du trait en cours
+let strokePart = null; // le trait reste verrouillé sur la partie où il a commencé
 
 function paintAtScreen(x, y, quiet) {
   paintRaycaster.setFromCamera({ x: (x / innerWidth) * 2 - 1, y: -(y / innerHeight) * 2 + 1 }, camera);
   const hits = paintRaycaster.intersectObject(selfMesh, true);
-  const hit = hits.find(h => h.object.userData.paint && h.uv);
+  const hit = hits.find(h => h.object.userData.partName && h.uv && h.face &&
+    (!strokePart || h.object.userData.partName === strokePart));
   if (!hit) {
     if (!quiet) showNotif('Place le curseur sur ton personnage pour le peindre', 1200);
     return;
   }
-  const p = hit.object.userData.paint;
+  const name = hit.object.userData.partName;
+  strokePart = name;
+  const face = hit.face.materialIndex;
+  const p = hit.object.material[face].userData;
   const px = Math.min(SKIN_RES - 1, Math.floor(hit.uv.x * SKIN_RES));
   const py = Math.min(SKIN_RES - 1, Math.floor((1 - hit.uv.y) * SKIN_RES));
-  const name = hit.object.userData.partName;
-  if (mySkin[name][py * SKIN_RES + px] === paintColor) return; // déjà peint
+  if (mySkin[name][face][py * SKIN_RES + px] === paintColor) return; // déjà peint
   p.ctx.fillStyle = cssColor(paintColor);
   p.ctx.fillRect(px, py, 1, 1);
   p.tex.needsUpdate = true;
-  mySkin[name][py * SKIN_RES + px] = paintColor;
+  mySkin[name][face][py * SKIN_RES + px] = paintColor;
   queueSkinSync();
 }
 
@@ -1073,10 +1098,10 @@ function pickColor() {
   const hits = paintRaycaster.intersectObjects(targets, true);
   for (const h of hits) {
     // pixel de son propre perso
-    if (h.object.userData.paint && h.uv) {
+    if (h.object.userData.partName && h.uv && h.face) {
       const px = Math.min(SKIN_RES - 1, Math.floor(h.uv.x * SKIN_RES));
       const py = Math.min(SKIN_RES - 1, Math.floor((1 - h.uv.y) * SKIN_RES));
-      paintColor = mySkin[h.object.userData.partName][py * SKIN_RES + px];
+      paintColor = mySkin[h.object.userData.partName][h.face.materialIndex][py * SKIN_RES + px];
       updatePaintUI();
       return;
     }
@@ -2017,6 +2042,7 @@ if (IS_TOUCH) {
           pipetteArmed = false;
           $('tPipette').classList.remove('armed');
         } else {
+          strokePart = null;
           lastStrokeX = t.clientX;
           lastStrokeY = t.clientY;
           paintSelf(true);
@@ -2060,7 +2086,7 @@ if (IS_TOUCH) {
   const endCanvasTouch = e => {
     for (const t of e.changedTouches) {
       if (t.identifier === lookId) lookId = null;
-      if (t.identifier === paintTouchId) { paintTouchId = null; lastStrokeX = lastStrokeY = null; }
+      if (t.identifier === paintTouchId) { paintTouchId = null; lastStrokeX = lastStrokeY = null; strokePart = null; }
     }
     if (e.touches.length < 2) { pinchDist = null; pinchMid = null; }
   };
@@ -2177,7 +2203,7 @@ document.addEventListener('mousedown', e => {
 
   // Mode atelier : peindre son perso / orbiter / pipette
   if (paintMode) {
-    if (e.button === 0) { paintDragging = true; lastStrokeX = cursorX; lastStrokeY = cursorY; paintSelf(); }
+    if (e.button === 0) { paintDragging = true; strokePart = null; lastStrokeX = cursorX; lastStrokeY = cursorY; paintSelf(); }
     else if (e.button === 1) { e.preventDefault(); orbitDragging = true; }
     else if (e.button === 2) pickColor();
     return;
@@ -2210,6 +2236,7 @@ document.addEventListener('mouseup', () => {
   paintDragging = false;
   orbitDragging = false;
   lastStrokeX = lastStrokeY = null;
+  strokePart = null;
 });
 document.addEventListener('contextmenu', e => e.preventDefault());
 
