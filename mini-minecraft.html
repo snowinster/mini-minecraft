@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Mini Minecraft - Multijoueur</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; background: #000; font-family: 'Courier New', monospace; }
+  #crosshair {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    color: white; font-size: 22px; pointer-events: none; text-shadow: 0 0 3px #000; z-index: 10;
+  }
+  #hud {
+    position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 6px; z-index: 10;
+  }
+  .slot {
+    width: 46px; height: 46px; border: 3px solid rgba(255,255,255,.4);
+    background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center;
+    flex-direction: column; color: #fff; font-size: 10px; cursor: pointer; border-radius: 4px;
+  }
+  .slot.active { border-color: #fff; background: rgba(255,255,255,.18); }
+  .swatch { width: 22px; height: 22px; border-radius: 3px; margin-bottom: 2px; }
+  #fps, #netstatus { position: fixed; left: 8px; color: #fff; font-size: 12px; text-shadow: 0 0 3px #000; z-index: 10; }
+  #fps { top: 8px; }
+  #netstatus { top: 26px; }
+  #overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.78); z-index: 20;
+    display: flex; align-items: center; justify-content: center; flex-direction: column; color: #fff; text-align: center;
+  }
+  #overlay h1 { font-size: 40px; margin: 0 0 12px; letter-spacing: 2px; }
+  #overlay p { line-height: 1.7; opacity: .85; font-size: 13px; }
+  .btn {
+    margin-top: 12px; padding: 12px 34px; font-size: 17px; font-family: inherit;
+    background: #5aa832; color: #fff; border: 3px solid #2e5c17; cursor: pointer; border-radius: 4px; min-width: 260px;
+  }
+  .btn:hover { background: #6cc23e; }
+  .btn.alt { background: #3a7bd5; border-color: #1f4a87; }
+  .btn.alt:hover { background: #4a8be5; }
+  .btn.gray { background: #666; border-color: #333; }
+  #joinRow { display: none; margin-top: 12px; }
+  #codeInput {
+    padding: 12px; font-size: 17px; font-family: inherit; width: 170px;
+    text-transform: uppercase; text-align: center; border: 3px solid #999; border-radius: 4px; background: #111; color: #fff;
+  }
+  #roomInfo { margin-top: 14px; font-size: 15px; display: none; }
+  #roomCode { font-size: 28px; letter-spacing: 6px; color: #ffd94a; }
+  #menuMsg { margin-top: 10px; color: #ff9d9d; min-height: 18px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="crosshair">+</div>
+<div id="fps"></div>
+<div id="netstatus"></div>
+<div id="hud"></div>
+<div id="overlay">
+  <h1>MINI MINECRAFT</h1>
+  <p>
+    ZQSD / WASD : se déplacer &nbsp;|&nbsp; Espace : sauter<br>
+    Clic gauche : casser &nbsp;|&nbsp; Clic droit : poser &nbsp;|&nbsp; Molette / 1-5 : bloc &nbsp;|&nbsp; Échap : pause
+  </p>
+  <button class="btn" id="soloBtn">JOUER EN SOLO</button>
+  <button class="btn alt" id="hostBtn">CRÉER UNE PARTIE EN LIGNE</button>
+  <button class="btn alt" id="joinBtn">REJOINDRE UNE PARTIE</button>
+  <div id="joinRow">
+    <input id="codeInput" maxlength="4" placeholder="CODE">
+    <button class="btn gray" id="joinGo" style="min-width:auto">GO</button>
+  </div>
+  <div id="roomInfo">Code de la partie : <span id="roomCode"></span><br><span style="opacity:.7">Donne ce code a ton pote, puis clique ci-dessous.</span></div>
+  <button class="btn" id="playBtn" style="display:none">ENTRER DANS LE MONDE</button>
+  <div id="menuMsg"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
+<script>
+// ---------- Config ----------
+const WORLD = 64;
+const GRAVITY = 26, JUMP = 9, SPEED = 6, PLAYER_H = 1.7, REACH = 6;
+const MAX_INSTANCES = 20000;
+const PEER_PREFIX = 'minimc-fr-'; // évite les collisions d'ID sur le broker PeerJS public
+
+const TYPES = {
+  grass: { name: 'Herbe',  top: 0x5aa832, side: 0x7a5230 },
+  dirt:  { name: 'Terre',  top: 0x7a5230, side: 0x7a5230 },
+  stone: { name: 'Pierre', top: 0x8a8a8a, side: 0x8a8a8a },
+  wood:  { name: 'Bois',   top: 0xa8763e, side: 0x8b5a2b },
+  leaf:  { name: 'Feuille',top: 0x3e7d2c, side: 0x3e7d2c },
+};
+const PLACEABLE = ['grass', 'dirt', 'stone', 'wood', 'leaf'];
+const PLAYER_COLORS = [0xe74c3c, 0x3498db, 0xf1c40f, 0x9b59b6, 0x1abc9c];
+let selected = 0;
+
+// ---------- Scène ----------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 35, 90);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 200);
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+sun.position.set(30, 60, 20);
+scene.add(sun);
+
+// ---------- Monde (données + rendu instancié) ----------
+const world = new Map();      // "x,y,z" -> type
+const edits = new Map();      // diff par rapport au terrain généré : clé -> type ou null (cassé)
+const key = (x, y, z) => `${x},${y},${z}`;
+
+const geo = new THREE.BoxGeometry(1, 1, 1);
+const NEIGHBORS = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+const instanced = {};
+for (const t of Object.keys(TYPES)) {
+  const c = TYPES[t];
+  const side = new THREE.MeshLambertMaterial({ color: c.side });
+  const top = new THREE.MeshLambertMaterial({ color: c.top });
+  const mesh = new THREE.InstancedMesh(geo, [side, side, top, side, side, side], MAX_INSTANCES);
+  mesh.count = 0;
+  mesh.frustumCulled = false;
+  scene.add(mesh);
+  instanced[t] = mesh;
+}
+
+function isExposed(x, y, z) {
+  for (const [dx, dy, dz] of NEIGHBORS)
+    if (!world.has(key(x + dx, y + dy, z + dz))) return true;
+  return false;
+}
+
+const dummy = new THREE.Object3D();
+let rebuildQueued = false;
+function rebuild() {
+  rebuildQueued = false;
+  const counts = {};
+  for (const t of Object.keys(TYPES)) counts[t] = 0;
+  for (const [k, t] of world) {
+    const [x, y, z] = k.split(',').map(Number);
+    if (!isExposed(x, y, z)) continue;
+    const i = counts[t]++;
+    if (i >= MAX_INSTANCES) continue;
+    dummy.position.set(x + 0.5, y + 0.5, z + 0.5);
+    dummy.updateMatrix();
+    instanced[t].setMatrixAt(i, dummy.matrix);
+  }
+  for (const t of Object.keys(TYPES)) {
+    instanced[t].count = counts[t];
+    instanced[t].instanceMatrix.needsUpdate = true;
+  }
+}
+function queueRebuild() {
+  if (!rebuildQueued) { rebuildQueued = true; setTimeout(rebuild, 0); }
+}
+
+// Applique une modification (locale ou reçue du réseau)
+function applyEdit(k, type, fromNetwork) {
+  edits.set(k, type);
+  if (type === null) world.delete(k);
+  else world.set(k, type);
+  queueRebuild();
+  if (!fromNetwork) net.sendEdit(k, type);
+}
+
+// ---------- Génération ----------
+function hash(x, z) {
+  let h = Math.sin(x * 127.1 + z * 311.7) * 43758.5453;
+  return h - Math.floor(h);
+}
+function noise(x, z) {
+  const xi = Math.floor(x), zi = Math.floor(z);
+  const xf = x - xi, zf = z - zi;
+  const a = hash(xi, zi), b = hash(xi + 1, zi), c = hash(xi, zi + 1), d = hash(xi + 1, zi + 1);
+  const u = xf * xf * (3 - 2 * xf), v = zf * zf * (3 - 2 * zf);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+function heightAt(x, z) {
+  return Math.floor(2 + noise(x / 9, z / 9) * 6 + noise(x / 23, z / 23) * 4);
+}
+
+function generateWorld() {
+  world.clear();
+  const half = WORLD / 2;
+  for (let x = -half; x < half; x++) {
+    for (let z = -half; z < half; z++) {
+      const h = heightAt(x, z);
+      world.set(key(x, h, z), 'grass');
+      world.set(key(x, h - 1, z), 'dirt');
+      world.set(key(x, h - 2, z), 'dirt');
+      world.set(key(x, h - 3, z), 'stone');
+      if (hash(x * 3.7, z * 5.1) > 0.985 && Math.abs(x) > 3 && Math.abs(z) > 3) {
+        const th = 4;
+        for (let y = 1; y <= th; y++) world.set(key(x, h + y, z), 'wood');
+        for (let dx = -2; dx <= 2; dx++)
+          for (let dz = -2; dz <= 2; dz++)
+            for (let dy = th - 1; dy <= th + 1; dy++)
+              if (Math.abs(dx) + Math.abs(dz) + Math.abs(dy - th) < 4 && !(dx === 0 && dz === 0 && dy <= th))
+                world.set(key(x + dx, h + dy, z + dz), 'leaf');
+      }
+    }
+  }
+  // ré-applique les modifications connues
+  for (const [k, t] of edits) {
+    if (t === null) world.delete(k);
+    else world.set(k, t);
+  }
+  rebuild();
+}
+generateWorld();
+
+// ---------- Joueurs distants ----------
+const remotePlayers = new Map(); // id -> { group, target:{x,y,z,yaw} }
+
+function makePlayerMesh(colorIdx) {
+  const color = PLAYER_COLORS[colorIdx % PLAYER_COLORS.length];
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(0.55, 1.1, 0.32),
+    new THREE.MeshLambertMaterial({ color })
+  );
+  body.position.y = 0.55;
+  const head = new THREE.Mesh(
+    new THREE.BoxGeometry(0.45, 0.45, 0.45),
+    new THREE.MeshLambertMaterial({ color: 0xffd9b3 })
+  );
+  head.position.y = 1.35;
+  g.add(body, head);
+  return g;
+}
+
+function ensureRemote(id, colorIdx) {
+  if (remotePlayers.has(id)) return remotePlayers.get(id);
+  const group = makePlayerMesh(colorIdx);
+  scene.add(group);
+  const r = { group, target: { x: 0, y: -100, z: 0, yaw: 0 } };
+  remotePlayers.set(id, r);
+  updateNetStatus();
+  return r;
+}
+
+function removeRemote(id) {
+  const r = remotePlayers.get(id);
+  if (r) { scene.remove(r.group); remotePlayers.delete(id); updateNetStatus(); }
+}
+
+// ---------- Réseau (PeerJS, pair-a-pair) ----------
+const net = {
+  peer: null,
+  isHost: false,
+  conns: [],          // hôte : toutes les connexions ; client : [connexion vers l'hôte]
+  myColor: 0,
+  nextColor: 1,
+
+  makeCode() {
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    let c = '';
+    for (let i = 0; i < 4; i++) c += chars[Math.floor(Math.random() * chars.length)];
+    return c;
+  },
+
+  host(onReady, onError) {
+    const code = this.makeCode();
+    this.peer = new Peer(PEER_PREFIX + code);
+    this.isHost = true;
+    this.myColor = 0;
+    this.peer.on('open', () => onReady(code));
+    this.peer.on('error', e => onError(e));
+    this.peer.on('connection', conn => {
+      const colorIdx = this.nextColor++;
+      conn.on('open', () => {
+        this.conns.push(conn);
+        conn.metadata_color = colorIdx;
+        // envoie l'état du monde (uniquement le diff) + sa couleur
+        conn.send({ t: 'init', color: colorIdx, edits: [...edits.entries()] });
+        updateNetStatus();
+      });
+      conn.on('data', d => this.onData(conn, d));
+      conn.on('close', () => {
+        this.conns = this.conns.filter(c => c !== conn);
+        removeRemote(conn.peer);
+        // informe les autres
+        this.broadcast({ t: 'leave', id: conn.peer }, null);
+        updateNetStatus();
+      });
+    });
+  },
+
+  join(code, onReady, onError) {
+    this.peer = new Peer();
+    this.isHost = false;
+    this.peer.on('open', () => {
+      const conn = this.peer.connect(PEER_PREFIX + code.toUpperCase(), { reliable: true });
+      let opened = false;
+      conn.on('open', () => { opened = true; this.conns = [conn]; });
+      conn.on('data', d => {
+        if (d.t === 'init') {
+          this.myColor = d.color;
+          edits.clear();
+          for (const [k, t] of d.edits) edits.set(k, t);
+          generateWorld();
+          onReady();
+        } else this.onData(conn, d);
+      });
+      conn.on('close', () => { setStatus('Déconnecté de l\'hôte'); this.conns = []; });
+      conn.on('error', e => onError(e));
+      setTimeout(() => { if (!opened) onError(new Error('timeout')); }, 8000);
+    });
+    this.peer.on('error', e => onError(e));
+  },
+
+  onData(fromConn, d) {
+    if (d.t === 'pos') {
+      const r = ensureRemote(d.id, d.color);
+      r.target = { x: d.p[0], y: d.p[1], z: d.p[2], yaw: d.yaw };
+      if (this.isHost) this.broadcast(d, fromConn); // relaie aux autres
+    } else if (d.t === 'edit') {
+      applyEdit(d.k, d.type, true);
+      if (this.isHost) this.broadcast(d, fromConn);
+    } else if (d.t === 'leave') {
+      removeRemote(d.id);
+    }
+  },
+
+  broadcast(d, except) {
+    for (const c of this.conns) if (c !== except && c.open) c.send(d);
+  },
+
+  sendEdit(k, type) {
+    if (!this.peer) return;
+    this.broadcast({ t: 'edit', k, type }, null);
+  },
+
+  sendPos() {
+    if (!this.peer || !this.conns.length) return;
+    this.broadcast({
+      t: 'pos',
+      id: this.peer.id,
+      color: this.myColor,
+      p: [player.pos.x, player.pos.y, player.pos.z],
+      yaw: player.yaw,
+    }, null);
+  },
+};
+
+setInterval(() => net.sendPos(), 80);
+
+const statusEl = document.getElementById('netstatus');
+function setStatus(s) { statusEl.textContent = s; }
+function updateNetStatus() {
+  if (!net.peer) { setStatus(''); return; }
+  const n = net.isHost ? net.conns.length : remotePlayers.size;
+  setStatus(net.isHost
+    ? `Hôte - ${net.conns.length} joueur(s) connecté(s)`
+    : 'Connecté a la partie');
+}
+
+// ---------- Joueur local ----------
+const player = {
+  pos: new THREE.Vector3(0.5, heightAt(0, 0) + 3, 0.5),
+  vel: new THREE.Vector3(),
+  onGround: false,
+  yaw: 0, pitch: 0,
+};
+
+function isSolid(x, y, z) {
+  return world.has(key(Math.floor(x), Math.floor(y), Math.floor(z)));
+}
+function collide(pos) {
+  const r = 0.3;
+  for (const dx of [-r, r]) for (const dz of [-r, r]) for (const dy of [0, 0.9, PLAYER_H - 0.05]) {
+    if (isSolid(pos.x + dx, pos.y + dy, pos.z + dz)) return true;
+  }
+  return false;
+}
+
+// ---------- Menu ----------
+const overlay = document.getElementById('overlay');
+const menuMsg = document.getElementById('menuMsg');
+const playBtn = document.getElementById('playBtn');
+let locked = false;
+
+function showPlay() {
+  playBtn.style.display = 'inline-block';
+  document.getElementById('soloBtn').style.display = 'none';
+  document.getElementById('hostBtn').style.display = 'none';
+  document.getElementById('joinBtn').style.display = 'none';
+  document.getElementById('joinRow').style.display = 'none';
+}
+
+document.getElementById('soloBtn').onclick = () => {
+  showPlay();
+  playBtn.click();
+};
+
+document.getElementById('hostBtn').onclick = () => {
+  menuMsg.textContent = 'Création de la partie...';
+  net.host(code => {
+    menuMsg.textContent = '';
+    document.getElementById('roomCode').textContent = code;
+    document.getElementById('roomInfo').style.display = 'block';
+    showPlay();
+    updateNetStatus();
+  }, () => {
+    menuMsg.textContent = 'Erreur de connexion au serveur d\'appairage. Réessaie.';
+  });
+};
+
+document.getElementById('joinBtn').onclick = () => {
+  document.getElementById('joinRow').style.display = 'block';
+  document.getElementById('codeInput').focus();
+};
+
+document.getElementById('joinGo').onclick = () => {
+  const code = document.getElementById('codeInput').value.trim();
+  if (code.length !== 4) { menuMsg.textContent = 'Le code fait 4 caractères.'; return; }
+  menuMsg.textContent = 'Connexion...';
+  net.join(code, () => {
+    menuMsg.textContent = '';
+    showPlay();
+    updateNetStatus();
+  }, () => {
+    menuMsg.textContent = 'Partie introuvable. Vérifie le code (l\'hôte doit garder sa page ouverte).';
+  });
+};
+
+playBtn.onclick = () => renderer.domElement.requestPointerLock();
+document.addEventListener('pointerlockchange', () => {
+  locked = document.pointerLockElement === renderer.domElement;
+  overlay.style.display = locked ? 'none' : 'flex';
+});
+
+// ---------- Contrôles ----------
+const keys = {};
+document.addEventListener('mousemove', e => {
+  if (!locked) return;
+  player.yaw -= e.movementX * 0.0025;
+  player.pitch -= e.movementY * 0.0025;
+  player.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, player.pitch));
+});
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (locked && e.code.startsWith('Digit')) {
+    const n = parseInt(e.code.slice(5)) - 1;
+    if (n >= 0 && n < PLACEABLE.length) { selected = n; updateHud(); }
+  }
+});
+document.addEventListener('keyup', e => keys[e.code] = false);
+document.addEventListener('wheel', e => {
+  if (!locked) return;
+  selected = (selected + (e.deltaY > 0 ? 1 : -1) + PLACEABLE.length) % PLACEABLE.length;
+  updateHud();
+});
+
+// ---------- Casser / poser ----------
+function raycastVoxel() {
+  const dir = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
+  const pos = camera.position.clone();
+  let x = Math.floor(pos.x), y = Math.floor(pos.y), z = Math.floor(pos.z);
+  const stepX = Math.sign(dir.x), stepY = Math.sign(dir.y), stepZ = Math.sign(dir.z);
+  const tDeltaX = Math.abs(1 / dir.x), tDeltaY = Math.abs(1 / dir.y), tDeltaZ = Math.abs(1 / dir.z);
+  let tMaxX = tDeltaX * (stepX > 0 ? (x + 1 - pos.x) : (pos.x - x));
+  let tMaxY = tDeltaY * (stepY > 0 ? (y + 1 - pos.y) : (pos.y - y));
+  let tMaxZ = tDeltaZ * (stepZ > 0 ? (z + 1 - pos.z) : (pos.z - z));
+  let face = null, t = 0;
+  while (t < REACH) {
+    if (tMaxX < tMaxY && tMaxX < tMaxZ) { x += stepX; t = tMaxX; tMaxX += tDeltaX; face = [-stepX, 0, 0]; }
+    else if (tMaxY < tMaxZ) { y += stepY; t = tMaxY; tMaxY += tDeltaY; face = [0, -stepY, 0]; }
+    else { z += stepZ; t = tMaxZ; tMaxZ += tDeltaZ; face = [0, 0, -stepZ]; }
+    if (world.has(key(x, y, z))) return { x, y, z, face };
+  }
+  return null;
+}
+
+document.addEventListener('mousedown', e => {
+  if (!locked) return;
+  const hit = raycastVoxel();
+  if (!hit) return;
+  if (e.button === 0) {
+    applyEdit(key(hit.x, hit.y, hit.z), null, false);
+  } else if (e.button === 2) {
+    const nx = hit.x + hit.face[0], ny = hit.y + hit.face[1], nz = hit.z + hit.face[2];
+    const p = player.pos;
+    const inPlayer = Math.floor(p.x) === nx && Math.floor(p.z) === nz &&
+                     (Math.floor(p.y) === ny || Math.floor(p.y + 1) === ny);
+    if (!inPlayer) applyEdit(key(nx, ny, nz), PLACEABLE[selected], false);
+  }
+});
+document.addEventListener('contextmenu', e => e.preventDefault());
+
+// ---------- HUD ----------
+const hud = document.getElementById('hud');
+function updateHud() {
+  hud.innerHTML = '';
+  PLACEABLE.forEach((t, i) => {
+    const d = document.createElement('div');
+    d.className = 'slot' + (i === selected ? ' active' : '');
+    d.innerHTML = `<div class="swatch" style="background:#${TYPES[t].top.toString(16).padStart(6,'0')}"></div>${TYPES[t].name}`;
+    d.onclick = () => { selected = i; updateHud(); };
+    hud.appendChild(d);
+  });
+}
+updateHud();
+
+// ---------- Boucle ----------
+const fpsEl = document.getElementById('fps');
+let last = performance.now(), fpsTime = 0, fpsCount = 0;
+
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+
+  fpsCount++; fpsTime += dt;
+  if (fpsTime >= 0.5) {
+    fpsEl.textContent = Math.round(fpsCount / fpsTime) + ' FPS';
+    fpsTime = 0; fpsCount = 0;
+  }
+
+  if (locked) {
+    const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+    const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+    const move = new THREE.Vector3();
+    if (keys['KeyW'] || keys['ArrowUp']) move.add(fwd);
+    if (keys['KeyS'] || keys['ArrowDown']) move.sub(fwd);
+    if (keys['KeyD'] || keys['ArrowRight']) move.add(right);
+    if (keys['KeyA'] || keys['ArrowLeft']) move.sub(right);
+    if (move.lengthSq() > 0) move.normalize().multiplyScalar(SPEED);
+
+    player.vel.x = move.x;
+    player.vel.z = move.z;
+    player.vel.y -= GRAVITY * dt;
+
+    if (keys['Space'] && player.onGround) {
+      player.vel.y = JUMP;
+      player.onGround = false;
+    }
+
+    const p = player.pos;
+    const test = p.clone();
+    test.x = p.x + player.vel.x * dt;
+    if (!collide(test)) p.x = test.x; else test.x = p.x;
+    test.z = p.z + player.vel.z * dt;
+    if (!collide(test)) p.z = test.z; else test.z = p.z;
+    test.y = p.y + player.vel.y * dt;
+    if (!collide(test)) { p.y = test.y; player.onGround = false; }
+    else { if (player.vel.y < 0) player.onGround = true; player.vel.y = 0; }
+
+    if (p.y < -20) { p.set(0.5, heightAt(0, 0) + 3, 0.5); player.vel.set(0, 0, 0); }
+
+    camera.position.set(p.x, p.y + PLAYER_H - 0.15, p.z);
+    camera.rotation.order = 'YXZ';
+    camera.rotation.y = player.yaw;
+    camera.rotation.x = player.pitch;
+  }
+
+  // interpolation des joueurs distants
+  for (const r of remotePlayers.values()) {
+    const g = r.group;
+    g.position.lerp(new THREE.Vector3(r.target.x, r.target.y, r.target.z), 0.25);
+    g.rotation.y += (r.target.yaw - g.rotation.y) * 0.25;
+  }
+
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(loop);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
