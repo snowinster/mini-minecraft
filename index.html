@@ -208,7 +208,7 @@
 <div id="flash"></div>
 <div id="vignette"></div>
 <div id="ammo"></div>
-<div id="paintInfo"><span class="pc" id="paintSwatch"></span>Souris : pinceau &nbsp;|&nbsp; Flèches : tourner autour &nbsp;|&nbsp; Clic G : peindre &nbsp;|&nbsp; Clic D : pipette &nbsp;|&nbsp; P : sortir</div>
+<div id="paintInfo"><span class="pc" id="paintSwatch"></span>Clic G : peindre &nbsp;|&nbsp; Clic D : pipette &nbsp;|&nbsp; Clic molette : tourner &nbsp;|&nbsp; Molette : zoom &nbsp;|&nbsp; P : sortir</div>
 <div id="paintCursor"></div>
 <div id="blind"><h2>Les joueurs se cachent...</h2><div class="count">60</div><p>Tu es le CHASSEUR. Prépare-toi !</p></div>
 <div id="deadOverlay"><div>💀 Tu as été éliminé !</div></div>
@@ -246,7 +246,7 @@
         <div class="rItem"><div class="rIcon">🙈</div><div><b>Cache-cache</b> : un chasseur est tiré au sort. Les cachés ont 60 s pour se planquer (<kbd>R</kbd> = prêt en avance), puis 3 min de chasse pendant que la nuit tombe.</div></div>
         <div class="rItem"><div class="rIcon">❤️</div><div><b>Survie</b> : les cachés sont <b>3x plus petits</b>, ont 2 vies mais ne peuvent pas toucher aux blocs — leurs armes : la taille et le camouflage. Le chasseur a 5 balles par chargeur, rechargement 2,5 s.</div></div>
         <div class="rItem"><div class="rIcon">🎭</div><div><b>Leurre</b> : <kbd>F</kbd> pose un faux joueur (1 par partie) pour piéger le chasseur.</div></div>
-        <div class="rItem"><div class="rIcon">🎨</div><div><b>Peinture camouflage</b> : <kbd>C</kbd> bascule la vue 1re/3e personne (les cachés démarrent en 3e personne). <kbd>P</kbd> ouvre l'atelier : souris = pinceau, flèches = tourner autour du perso, clic droit = pipette sur un bloc, clic gauche = peindre pixel par pixel. Fonds-toi dans le décor !</div></div>
+        <div class="rItem"><div class="rIcon">🎨</div><div><b>Peinture camouflage</b> : <kbd>C</kbd> bascule la vue 1re/3e personne (les cachés démarrent en 3e personne). <kbd>P</kbd> ouvre l'atelier : souris = pinceau, clic droit = pipette au pixel près sur les blocs, clic gauche = peindre, clic molette maintenu = tourner autour du perso, molette = zoom. Fonds-toi dans le décor !</div></div>
         <div class="rItem"><div class="rIcon">⭐</div><div><b>Points</b> : reste a moins de 20 blocs du chasseur sans te faire voir pour gagner des points de discrétion.</div></div>
         <div class="rItem"><div class="rIcon">🧊</div><div><b>Chat glacé</b> : variante où chaque joueur touché devient chasseur a son tour !</div></div>
         <div class="rItem"><div class="rIcon">🫀</div><div><b>Tension</b> : ton écran rougit et ton cœur bat quand le chasseur approche. <kbd>V</kbd> : voir la vue du chasseur (cachés / éliminés).</div></div>
@@ -271,7 +271,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
 <script>
 // ---------- Config ----------
-const WORLD = 26; // côté de la map en blocs (petite = parties plus rythmées)
+const WORLD = 32; // côté de la map en blocs (petite = parties plus rythmées)
 const GRAVITY = 26, JUMP = 9, SPEED = 6, SPRINT_MULT = 1.65, PLAYER_H = 1.7, REACH = 6;
 const MAX_INSTANCES = 20000;
 const PEER_PREFIX = 'minimc-fr-';
@@ -367,7 +367,7 @@ const sfx = {
   break() { noiseBurst(0.09, 0.25, 700); },
   shoot(far) { noiseBurst(0.14, far ? 0.12 : 0.35, 1800); tone(140, 0.18, 'sawtooth', far ? 0.06 : 0.18, 60); },
   step() { noiseBurst(0.045, 0.07, 500); },
-  heart() { tone(58, 0.1, 'sine', 0.5); setTimeout(() => tone(52, 0.12, 'sine', 0.4), 140); },
+  heart() { tone(58, 0.1, 'sine', 0.28); setTimeout(() => tone(52, 0.12, 'sine', 0.22), 140); },
   hit() { tone(880, 0.1, 'square', 0.15); setTimeout(() => tone(440, 0.15, 'square', 0.15), 90); },
   dead() { tone(300, 0.5, 'sawtooth', 0.2, 60); },
   convert() { tone(220, 0.12, 'square', 0.15, 440); setTimeout(() => tone(440, 0.2, 'square', 0.15, 880), 110); },
@@ -512,19 +512,11 @@ function drawFlower(petal) {
     c.fillRect(7, 5, 2, 2);
   };
 }
-function drawGrassTuft(c) {
-  for (let i = 0; i < 7; i++) {
-    c.fillStyle = shadeCss(0x4a9130, 0.8 + Math.random() * 0.4);
-    const h = 5 + Math.floor(Math.random() * 8);
-    c.fillRect(2 + i * 2, 16 - h, 1, h);
-  }
-}
 const FLOWER_TEXTURES = [
   makePlantTexture(drawFlower('#e74c3c')),
   makePlantTexture(drawFlower('#f6f6f6')),
   makePlantTexture(drawFlower('#4a8be5')),
 ];
-const GRASS_TUFT_TEX = makePlantTexture(drawGrassTuft);
 
 function addPlant(x, y, z, tex, size) {
   const mat = new THREE.MeshLambertMaterial({ map: tex, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide });
@@ -679,7 +671,7 @@ function generateWorld() {
     else world.set(k, t);
   }
 
-  // Fleurs et hautes herbes sur les blocs d'herbe libres
+  // Fleurs sur les blocs d'herbe libres
   decorGroup.clear();
   for (let x = -half; x < half; x++) {
     for (let z = -half; z < half; z++) {
@@ -687,8 +679,6 @@ function generateWorld() {
       if (world.get(key(x, h, z)) !== 'grass' || world.has(key(x, h + 1, z))) continue;
       if (ihash(x, z, 31) > 0.975) {
         addPlant(x, h + 1, z, FLOWER_TEXTURES[Math.floor(ihash(x, z, 32) * FLOWER_TEXTURES.length)], 0.6);
-      } else if (ihash(x, z, 30) > 0.88) {
-        addPlant(x, h + 1, z, GRASS_TUFT_TEX, 0.7);
       }
     }
   }
@@ -990,6 +980,7 @@ function cursorNDC() {
 // Peint le pixel du perso sous le curseur. On peut maintenir le clic
 // et glisser pour peindre en continu (quiet = pas de notif pendant le glissé).
 let paintDragging = false;
+let orbitDragging = false; // clic molette maintenu = orbite autour du perso
 function paintSelf(quiet) {
   paintRaycaster.setFromCamera(cursorNDC(), camera);
   const hits = paintRaycaster.intersectObject(selfMesh, true);
@@ -1010,17 +1001,43 @@ function paintSelf(quiet) {
   queueSkinSync();
 }
 
-// Clic droit en 3e personne : pipette, prend la couleur du bloc sous le curseur
+// Pipette au pixel près : prélève la couleur EXACTE du pixel de texture
+// visé (bloc, fleur, ou même un pixel déjà peint sur son propre perso).
+function sampleTexturePixel(tex, uv) {
+  if (!tex || !tex.image) return null;
+  const canvas = tex.image;
+  const px = Math.min(canvas.width - 1, Math.floor(uv.x * canvas.width));
+  const py = Math.min(canvas.height - 1, Math.floor((1 - uv.y) * canvas.height));
+  const d = canvas.getContext('2d').getImageData(px, py, 1, 1).data;
+  if (d[3] < 128) return null; // pixel transparent (bord d'une fleur)
+  return (d[0] << 16) | (d[1] << 8) | d[2];
+}
+
 function pickColor() {
   paintRaycaster.setFromCamera(cursorNDC(), camera);
-  const hit = raycastVoxel(20, paintRaycaster.ray.origin, paintRaycaster.ray.direction);
-  if (!hit) { showNotif('Place le curseur sur un bloc pour prendre sa couleur', 1200); return; }
-  const t = world.get(key(hit.x, hit.y, hit.z));
-  if (!t) return;
-  paintColor = (hit.face && hit.face[1] === 1) ? TYPES[t].top : TYPES[t].side;
-  updatePaintUI();
-  sfx.reload();
-  showNotif('🎨 Couleur "' + TYPES[t].name + '" sélectionnée', 1200);
+  const targets = [selfMesh, decorGroup, ...Object.values(instanced)];
+  const hits = paintRaycaster.intersectObjects(targets, true);
+  for (const h of hits) {
+    // pixel de son propre perso
+    if (h.object.userData.paint && h.uv) {
+      const px = Math.min(SKIN_RES - 1, Math.floor(h.uv.x * SKIN_RES));
+      const py = Math.min(SKIN_RES - 1, Math.floor((1 - h.uv.y) * SKIN_RES));
+      paintColor = mySkin[h.object.userData.partName][py * SKIN_RES + px];
+      updatePaintUI();
+      return;
+    }
+    // pixel d'un bloc ou d'une fleur
+    if (!h.uv || !h.face) continue;
+    const mats = h.object.material;
+    const mat = Array.isArray(mats) ? mats[h.face.materialIndex || 0] : mats;
+    const c = sampleTexturePixel(mat && mat.map, h.uv);
+    if (c !== null) {
+      paintColor = c;
+      updatePaintUI();
+      return;
+    }
+  }
+  showNotif('Place le curseur sur un bloc (ou ton perso) pour prélever sa couleur', 1200);
 }
 
 // Diffusion du skin aux autres joueurs (throttle + sauvegarde locale)
@@ -1774,6 +1791,12 @@ document.addEventListener('mousemove', e => {
   if (Math.abs(e.movementX) > 200 || Math.abs(e.movementY) > 200) return;
   // En mode atelier, la souris déplace le curseur-pinceau, pas la caméra
   if (paintMode) {
+    // Clic molette maintenu : on orbite autour du perso (comme Fusion/Blender)
+    if (orbitDragging) {
+      orbitYaw -= e.movementX * 0.006;
+      orbitPitch = Math.max(-1.25, Math.min(1.25, orbitPitch - e.movementY * 0.006));
+      return;
+    }
     cursorX = Math.max(0, Math.min(innerWidth, cursorX + e.movementX));
     cursorY = Math.max(0, Math.min(innerHeight, cursorY + e.movementY));
     paintCursorEl.style.left = cursorX + 'px';
@@ -1879,9 +1902,10 @@ document.addEventListener('mousedown', e => {
     return;
   }
 
-  // Mode atelier : peindre son perso / pipette
+  // Mode atelier : peindre son perso / orbiter / pipette
   if (paintMode) {
     if (e.button === 0) { paintDragging = true; paintSelf(); }
+    else if (e.button === 1) { e.preventDefault(); orbitDragging = true; }
     else if (e.button === 2) pickColor();
     return;
   }
@@ -1909,7 +1933,7 @@ document.addEventListener('mousedown', e => {
     }
   }
 });
-document.addEventListener('mouseup', () => { paintDragging = false; });
+document.addEventListener('mouseup', () => { paintDragging = false; orbitDragging = false; });
 document.addEventListener('contextmenu', e => e.preventDefault());
 
 // ---------- HUD ----------
@@ -2096,9 +2120,11 @@ function loop(now) {
       const hp = getPlayerPos(hid);
       if (hp) nearest = Math.min(nearest, Math.hypot(hp.x - player.pos.x, hp.y - player.pos.y, hp.z - player.pos.z));
     }
-    if (nearest < 30) {
-      danger = Math.min(1, (30 - nearest) / 26);
-      if (locked && now >= nextHeart) { sfx.heart(); nextHeart = now + 1300 - danger * 1000; }
+    // Le cœur ne bat que si le chasseur est a moins de 5 blocs, et
+    // s'accélère doucement quand il se rapproche (1,1 s -> 0,65 s).
+    if (nearest < 5) {
+      danger = Math.min(1, (5 - nearest) / 5);
+      if (locked && now >= nextHeart) { sfx.heart(); nextHeart = now + 1100 - danger * 450; }
     }
   }
   vignetteEl.style.opacity = Math.max(danger * 0.85, now < vignetteFlashUntil ? 1 : 0);
