@@ -638,7 +638,7 @@ function ensureRemote(id, colorIdx) {
   if (remotePlayers.has(id)) return remotePlayers.get(id);
   const group = makePlayerMesh(colorIdx);
   scene.add(group);
-  const r = { group, target: { x: 0, y: -100, z: 0, yaw: 0, pitch: 0 }, walkPhase: 0, name: null };
+  const r = { group, target: { x: 0, y: -100, z: 0, yaw: 0, pitch: 0 }, walkPhase: 0, name: null, lastSeen: performance.now() };
   remotePlayers.set(id, r);
   updateNetStatus();
   updateHunterModels();
@@ -648,6 +648,19 @@ function removeRemote(id) {
   const r = remotePlayers.get(id);
   if (r) { scene.remove(r.group); remotePlayers.delete(id); updateNetStatus(); }
 }
+
+// Un joueur dont on ne reçoit plus la position depuis 10 s a fermé son
+// onglet sans prévenir : on retire son personnage au lieu de le laisser
+// flotter, et l'hôte le sort proprement de la partie en cours.
+setInterval(() => {
+  const now = performance.now();
+  for (const [id, r] of remotePlayers) {
+    if (now - r.lastSeen > 10000) {
+      removeRemote(id);
+      if (net.isHost) hostHandleLeave(id);
+    }
+  }
+}, 3000);
 
 // ---------- Animation de tir (hitscan, sans recul) ----------
 function showTracer(a, b) {
@@ -904,6 +917,20 @@ function hostLaunchHideSeek(mode) {
   game.timers.push(setTimeout(hostStartHunting, HIDE_SECS * 1000));
 }
 
+// Si un joueur quitte en pleine partie : chasseur parti -> victoire des
+// cachés ; caché parti -> compté comme éliminé (sinon la partie devient
+// ingagnable pour le chasseur).
+function hostHandleLeave(id) {
+  if (game.mode !== 'hide') return;
+  if (id === game.hunterId) {
+    net.broadcast({ t: 'hs_win', who: 'hiders', scores: game.scores }, null);
+    endHideSeek('hiders', game.scores);
+  } else if (game.alive.has(id)) {
+    net.broadcast({ t: 'hs_dead', id }, null);
+    onDead(id);
+  }
+}
+
 function hostMarkReady(id) {
   if (game.phase !== 'hiding' || !game.alive.has(id)) return;
   game.readySet.add(id);
@@ -1100,6 +1127,7 @@ const net = {
         removeRemote(conn.peer);
         this.broadcast({ t: 'leave', id: conn.peer }, null);
         updateNetStatus();
+        hostHandleLeave(conn.peer);
       });
     });
   },
@@ -1132,6 +1160,7 @@ const net = {
     if (d.t === 'pos') {
       const r = ensureRemote(d.id, d.color);
       r.target = { x: d.p[0], y: d.p[1], z: d.p[2], yaw: d.yaw, pitch: d.pitch || 0 };
+      r.lastSeen = performance.now();
       if (d.name) { playerNames.set(d.id, d.name); setRemoteName(r, d.name); }
     } else if (d.t === 'edit') {
       applyEdit(d.k, d.type, true);
@@ -1382,6 +1411,9 @@ const keys = {};
 document.addEventListener('mousemove', e => {
   if (!locked || spectating) return;
   if (isHunter() && game.phase === 'hiding') return;
+  // Bug connu du pointer lock (Chrome) : un delta de souris géant arrive
+  // parfois d'un coup et fait "sauter" la caméra. On ignore ces pics.
+  if (Math.abs(e.movementX) > 200 || Math.abs(e.movementY) > 200) return;
   const sens = 0.0025 * settings.sens;
   player.yaw -= e.movementX * sens;
   player.pitch -= e.movementY * sens;
@@ -1495,6 +1527,58 @@ let last = performance.now(), fpsTime = 0, fpsCount = 0;
 let nextHeart = 0, vignetteFlashUntil = 0, stepAcc = 0;
 const prevPos = player.pos.clone();
 
+// La gravité s'applique MÊME quand le joueur est dans le menu ou en mode
+// spectateur : si quelqu'un creuse sous lui, il tombe quand même.
+// canControl = le joueur peut se déplacer (pointer lock actif, pas figé).
+function stepPhysics(dt, canControl) {
+  const move = new THREE.Vector3();
+  if (canControl) {
+    const B = settings.binds;
+    const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+    const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+    if (keys[B.forward] || keys['ArrowUp']) move.add(fwd);
+    if (keys[B.back] || keys['ArrowDown']) move.sub(fwd);
+    if (keys[B.right] || keys['ArrowRight']) move.add(right);
+    if (keys[B.left] || keys['ArrowLeft']) move.sub(right);
+    const sprintDown = keys[B.sprint] || (B.sprint.startsWith('Shift') && (keys['ShiftLeft'] || keys['ShiftRight']));
+    if (move.lengthSq() > 0) move.normalize().multiplyScalar(SPEED * (sprintDown ? SPRINT_MULT : 1));
+    if (keys[B.jump] && player.onGround) { player.vel.y = JUMP; player.onGround = false; }
+  }
+  player.vel.x = move.x;
+  player.vel.z = move.z;
+  player.vel.y -= GRAVITY * dt;
+
+  const p = player.pos;
+  const test = p.clone();
+  test.x = p.x + player.vel.x * dt;
+  if (!collide(test)) p.x = test.x; else test.x = p.x;
+  test.z = p.z + player.vel.z * dt;
+  if (!collide(test)) p.z = test.z; else test.z = p.z;
+  test.y = p.y + player.vel.y * dt;
+  if (!collide(test)) { p.y = test.y; player.onGround = false; }
+  else { if (player.vel.y < 0) player.onGround = true; player.vel.y = 0; }
+
+  if (p.y < -20) { p.set(0.5, heightAt(0, 0) + 3, 0.5); player.vel.set(0, 0, 0); }
+
+  // Bruits de pas
+  const movedD = Math.hypot(p.x - prevPos.x, p.z - prevPos.z);
+  if (canControl && player.onGround && movedD > 0.001) {
+    stepAcc += movedD;
+    if (stepAcc > 2.3) { stepAcc = 0; sfx.step(); }
+  }
+  prevPos.copy(p);
+}
+
+// Onglet en arrière-plan : requestAnimationFrame est en pause, ce timer
+// continue la gravité pour que le joueur tombe quand même.
+let lastBgStep = performance.now();
+setInterval(() => {
+  const bgNow = performance.now();
+  const dt = Math.min((bgNow - lastBgStep) / 1000, 0.2);
+  lastBgStep = bgNow;
+  if (document.hidden) stepPhysics(dt, false);
+}, 150);
+
 function loop(now) {
   requestAnimationFrame(loop);
   const dt = Math.min((now - last) / 1000, 0.05);
@@ -1508,45 +1592,8 @@ function loop(now) {
 
   const frozen = (isHunter() && game.phase === 'hiding') || game.dead || spectating;
 
-  if (locked && !frozen) {
-    const B = settings.binds;
-    const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
-    const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-    const move = new THREE.Vector3();
-    if (keys[B.forward] || keys['ArrowUp']) move.add(fwd);
-    if (keys[B.back] || keys['ArrowDown']) move.sub(fwd);
-    if (keys[B.right] || keys['ArrowRight']) move.add(right);
-    if (keys[B.left] || keys['ArrowLeft']) move.sub(right);
-    const sprintDown = keys[B.sprint] || (B.sprint.startsWith('Shift') && (keys['ShiftLeft'] || keys['ShiftRight']));
-    const sprint = sprintDown ? SPRINT_MULT : 1;
-    if (move.lengthSq() > 0) move.normalize().multiplyScalar(SPEED * sprint);
-
-    player.vel.x = move.x;
-    player.vel.z = move.z;
-    player.vel.y -= GRAVITY * dt;
-
-    if (keys[B.jump] && player.onGround) { player.vel.y = JUMP; player.onGround = false; }
-
-    const p = player.pos;
-    const test = p.clone();
-    test.x = p.x + player.vel.x * dt;
-    if (!collide(test)) p.x = test.x; else test.x = p.x;
-    test.z = p.z + player.vel.z * dt;
-    if (!collide(test)) p.z = test.z; else test.z = p.z;
-    test.y = p.y + player.vel.y * dt;
-    if (!collide(test)) { p.y = test.y; player.onGround = false; }
-    else { if (player.vel.y < 0) player.onGround = true; player.vel.y = 0; }
-
-    if (p.y < -20) { p.set(0.5, heightAt(0, 0) + 3, 0.5); player.vel.set(0, 0, 0); }
-
-    // Bruits de pas
-    const movedD = Math.hypot(p.x - prevPos.x, p.z - prevPos.z);
-    if (player.onGround && movedD > 0.001) {
-      stepAcc += movedD;
-      if (stepAcc > 2.3) { stepAcc = 0; sfx.step(); }
-    }
-    prevPos.copy(p);
-  }
+  stepPhysics(dt, locked && !frozen);
+  lastBgStep = now;
 
   const hunterRemote = spectating ? remotePlayers.get(game.hunterId) : null;
   if (hunterRemote) {
