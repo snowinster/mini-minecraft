@@ -2,13 +2,14 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<title>Mini Minecraft - Multijoueur</title>
+<title>Mini Minecraft - Cache-cache</title>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; background: #000; font-family: 'Courier New', monospace; }
   #crosshair {
     position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
     color: white; font-size: 22px; pointer-events: none; text-shadow: 0 0 3px #000; z-index: 10;
   }
+  #crosshair.gun { color: #ff4d4d; font-size: 28px; }
   #hud {
     position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
     display: flex; gap: 6px; z-index: 10;
@@ -23,19 +24,56 @@
   #fps, #netstatus { position: fixed; left: 8px; color: #fff; font-size: 12px; text-shadow: 0 0 3px #000; z-index: 10; }
   #fps { top: 8px; }
   #netstatus { top: 26px; }
+  #banner {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    color: #fff; font-size: 20px; text-shadow: 0 0 5px #000; z-index: 10;
+    background: rgba(0,0,0,.45); padding: 8px 22px; border-radius: 6px; display: none; text-align: center;
+  }
+  #banner .sub { font-size: 13px; opacity: .85; }
+  #notif {
+    position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+    color: #ffd94a; font-size: 16px; text-shadow: 0 0 5px #000; z-index: 10;
+    background: rgba(0,0,0,.55); padding: 8px 18px; border-radius: 6px; display: none;
+  }
+  #povTag {
+    position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
+    color: #ff8080; font-size: 15px; z-index: 10; background: rgba(0,0,0,.55);
+    padding: 6px 16px; border-radius: 6px; display: none;
+  }
+  #gun {
+    position: fixed; bottom: 0; right: 12%; width: 120px; height: 150px; z-index: 9; display: none;
+    pointer-events: none;
+  }
+  #gun .barrel { position: absolute; bottom: 55px; right: 30px; width: 26px; height: 90px; background: #333; border: 3px solid #111; border-radius: 4px 4px 0 0; transform: rotate(-12deg); }
+  #gun .grip { position: absolute; bottom: 0; right: 44px; width: 32px; height: 70px; background: #6b4a2b; border: 3px solid #3d2a18; border-radius: 4px; transform: rotate(8deg); }
+  #gun.recoil { animation: recoil .12s; }
+  @keyframes recoil { 50% { transform: translateY(14px) } }
+  #blind {
+    position: fixed; inset: 0; background: #000; z-index: 15; display: none;
+    align-items: center; justify-content: center; flex-direction: column; color: #fff; text-align: center;
+  }
+  #blind h2 { font-size: 30px; margin-bottom: 6px; }
+  #blind .count { font-size: 56px; color: #ffd94a; }
+  #deadOverlay {
+    position: fixed; inset: 0; background: rgba(120,0,0,.35); z-index: 14; display: none;
+    align-items: flex-start; justify-content: center; pointer-events: none;
+  }
+  #deadOverlay div { margin-top: 90px; color: #fff; font-size: 30px; text-shadow: 0 0 8px #000; background: rgba(0,0,0,.5); padding: 10px 26px; border-radius: 8px; }
   #overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,.78); z-index: 20;
     display: flex; align-items: center; justify-content: center; flex-direction: column; color: #fff; text-align: center;
   }
-  #overlay h1 { font-size: 40px; margin: 0 0 12px; letter-spacing: 2px; }
-  #overlay p { line-height: 1.7; opacity: .85; font-size: 13px; }
+  #overlay h1 { font-size: 38px; margin: 0 0 10px; letter-spacing: 2px; }
+  #overlay p { line-height: 1.7; opacity: .85; font-size: 13px; max-width: 680px; }
   .btn {
-    margin-top: 12px; padding: 12px 34px; font-size: 17px; font-family: inherit;
-    background: #5aa832; color: #fff; border: 3px solid #2e5c17; cursor: pointer; border-radius: 4px; min-width: 260px;
+    margin-top: 10px; padding: 12px 34px; font-size: 17px; font-family: inherit;
+    background: #5aa832; color: #fff; border: 3px solid #2e5c17; cursor: pointer; border-radius: 4px; min-width: 280px;
   }
   .btn:hover { background: #6cc23e; }
   .btn.alt { background: #3a7bd5; border-color: #1f4a87; }
   .btn.alt:hover { background: #4a8be5; }
+  .btn.red { background: #c0392b; border-color: #7b241c; }
+  .btn.red:hover { background: #d64534; }
   .btn.gray { background: #666; border-color: #333; }
   #joinRow { display: none; margin-top: 12px; }
   #codeInput {
@@ -45,19 +83,30 @@
   #roomInfo { margin-top: 14px; font-size: 15px; display: none; }
   #roomCode { font-size: 28px; letter-spacing: 6px; color: #ffd94a; }
   #menuMsg { margin-top: 10px; color: #ff9d9d; min-height: 18px; font-size: 13px; }
+  #resultBox { display: none; margin-top: 8px; font-size: 16px; line-height: 1.8; }
+  #resultBox .win { font-size: 26px; color: #ffd94a; }
 </style>
 </head>
 <body>
 <div id="crosshair">+</div>
 <div id="fps"></div>
 <div id="netstatus"></div>
+<div id="banner"></div>
+<div id="notif"></div>
+<div id="povTag">👁 POV DU CHASSEUR - appuie sur V pour revenir</div>
 <div id="hud"></div>
+<div id="gun"><div class="barrel"></div><div class="grip"></div></div>
+<div id="blind"><h2>Les joueurs se cachent...</h2><div class="count">60</div><p>Tu es le CHASSEUR. Prépare-toi !</p></div>
+<div id="deadOverlay"><div>💀 Tu as été éliminé !</div></div>
 <div id="overlay">
   <h1>MINI MINECRAFT</h1>
   <p>
-    ZQSD / WASD : se déplacer &nbsp;|&nbsp; Espace : sauter<br>
-    Clic gauche : casser &nbsp;|&nbsp; Clic droit : poser &nbsp;|&nbsp; Molette / 1-5 : bloc &nbsp;|&nbsp; Échap : pause
+    ZQSD / WASD : bouger &nbsp;|&nbsp; Maj : sprint &nbsp;|&nbsp; Espace : sauter &nbsp;|&nbsp; Clic gauche : casser / tirer &nbsp;|&nbsp; Clic droit : poser<br>
+    <b>Cache-cache</b> : un chasseur tiré au sort, 60 s pour se cacher (appuie sur <b>R</b> si tu es prêt avant), puis 3 min de chasse.<br>
+    Le caché peut POSER des blocs mais rien casser. S'il est a moins de 20 blocs du chasseur sans être vu, il gagne des points.<br>
+    <b>V</b> : voir la vue du chasseur (pour les cachés).
   </p>
+  <div id="resultBox"></div>
   <button class="btn" id="soloBtn">JOUER EN SOLO</button>
   <button class="btn alt" id="hostBtn">CRÉER UNE PARTIE EN LIGNE</button>
   <button class="btn alt" id="joinBtn">REJOINDRE UNE PARTIE</button>
@@ -65,8 +114,9 @@
     <input id="codeInput" maxlength="4" placeholder="CODE">
     <button class="btn gray" id="joinGo" style="min-width:auto">GO</button>
   </div>
-  <div id="roomInfo">Code de la partie : <span id="roomCode"></span><br><span style="opacity:.7">Donne ce code a ton pote, puis clique ci-dessous.</span></div>
+  <div id="roomInfo">Code de la partie : <span id="roomCode"></span><br><span style="opacity:.7">Donne ce code a ton pote.</span></div>
   <button class="btn" id="playBtn" style="display:none">ENTRER DANS LE MONDE</button>
+  <button class="btn red" id="hideSeekBtn" style="display:none">LANCER LE CACHE-CACHE</button>
   <div id="menuMsg"></div>
 </div>
 
@@ -75,9 +125,12 @@
 <script>
 // ---------- Config ----------
 const WORLD = 64;
-const GRAVITY = 26, JUMP = 9, SPEED = 6, PLAYER_H = 1.7, REACH = 6;
+const GRAVITY = 26, JUMP = 9, SPEED = 6, SPRINT_MULT = 1.65, PLAYER_H = 1.7, REACH = 6;
 const MAX_INSTANCES = 20000;
-const PEER_PREFIX = 'minimc-fr-'; // évite les collisions d'ID sur le broker PeerJS public
+const PEER_PREFIX = 'minimc-fr-';
+const HIDE_SECS = 60, HUNT_SECS = 180;
+const GUN_RANGE = 45, GUN_HIT_RADIUS = 0.75;
+const PROXIMITY_DIST = 20;
 
 const TYPES = {
   grass: { name: 'Herbe',  top: 0x5aa832, side: 0x7a5230 },
@@ -106,9 +159,9 @@ const sun = new THREE.DirectionalLight(0xffffff, 0.75);
 sun.position.set(30, 60, 20);
 scene.add(sun);
 
-// ---------- Monde (données + rendu instancié) ----------
-const world = new Map();      // "x,y,z" -> type
-const edits = new Map();      // diff par rapport au terrain généré : clé -> type ou null (cassé)
+// ---------- Monde ----------
+const world = new Map();
+const edits = new Map();
 const key = (x, y, z) => `${x},${y},${z}`;
 
 const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -155,7 +208,6 @@ function queueRebuild() {
   if (!rebuildQueued) { rebuildQueued = true; setTimeout(rebuild, 0); }
 }
 
-// Applique une modification (locale ou reçue du réseau)
 function applyEdit(k, type, fromNetwork) {
   edits.set(k, type);
   if (type === null) world.delete(k);
@@ -190,6 +242,7 @@ function generateWorld() {
       world.set(key(x, h - 1, z), 'dirt');
       world.set(key(x, h - 2, z), 'dirt');
       world.set(key(x, h - 3, z), 'stone');
+
       if (hash(x * 3.7, z * 5.1) > 0.985 && Math.abs(x) > 3 && Math.abs(z) > 3) {
         const th = 4;
         for (let y = 1; y <= th; y++) world.set(key(x, h + y, z), 'wood');
@@ -199,9 +252,27 @@ function generateWorld() {
               if (Math.abs(dx) + Math.abs(dz) + Math.abs(dy - th) < 4 && !(dx === 0 && dz === 0 && dy <= th))
                 world.set(key(x + dx, h + dy, z + dz), 'leaf');
       }
+      if (hash(x * 7.3, z * 2.9) > 0.992) {
+        world.set(key(x, h + 1, z), 'stone');
+        world.set(key(x + 1, h + 1, z), 'stone');
+        if (hash(x * 1.1, z * 9.7) > 0.5) world.set(key(x, h + 2, z), 'stone');
+        if (hash(x * 5.3, z * 3.3) > 0.5) world.set(key(x, h + 1, z + 1), 'stone');
+      }
+      if (hash(x * 1.9, z * 8.3) > 0.975) {
+        world.set(key(x, h + 1, z), 'leaf');
+        if (hash(x * 6.1, z * 1.7) > 0.6) world.set(key(x + 1, h + 1, z), 'leaf');
+      }
+      if (hash(x * 4.1, z * 6.7) > 0.9965 && Math.abs(x) < half - 4 && Math.abs(z) < half - 4) {
+        const horiz = hash(x * 2.2, z * 4.4) > 0.5;
+        for (let i = 0; i < 4; i++) {
+          const wx = x + (horiz ? i : 0), wz = z + (horiz ? 0 : i);
+          const wh = heightAt(wx, wz);
+          world.set(key(wx, wh + 1, wz), 'wood');
+          if (hash(wx * 3.9, wz * 7.1) > 0.35) world.set(key(wx, wh + 2, wz), 'wood');
+        }
+      }
     }
   }
-  // ré-applique les modifications connues
   for (const [k, t] of edits) {
     if (t === null) world.delete(k);
     else world.set(k, t);
@@ -211,20 +282,14 @@ function generateWorld() {
 generateWorld();
 
 // ---------- Joueurs distants ----------
-const remotePlayers = new Map(); // id -> { group, target:{x,y,z,yaw} }
+const remotePlayers = new Map();
 
 function makePlayerMesh(colorIdx) {
   const color = PLAYER_COLORS[colorIdx % PLAYER_COLORS.length];
   const g = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(0.55, 1.1, 0.32),
-    new THREE.MeshLambertMaterial({ color })
-  );
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.1, 0.32), new THREE.MeshLambertMaterial({ color }));
   body.position.y = 0.55;
-  const head = new THREE.Mesh(
-    new THREE.BoxGeometry(0.45, 0.45, 0.45),
-    new THREE.MeshLambertMaterial({ color: 0xffd9b3 })
-  );
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.45, 0.45), new THREE.MeshLambertMaterial({ color: 0xffd9b3 }));
   head.position.y = 1.35;
   g.add(body, head);
   return g;
@@ -234,24 +299,252 @@ function ensureRemote(id, colorIdx) {
   if (remotePlayers.has(id)) return remotePlayers.get(id);
   const group = makePlayerMesh(colorIdx);
   scene.add(group);
-  const r = { group, target: { x: 0, y: -100, z: 0, yaw: 0 } };
+  const r = { group, target: { x: 0, y: -100, z: 0, yaw: 0, pitch: 0 } };
   remotePlayers.set(id, r);
   updateNetStatus();
   return r;
 }
-
 function removeRemote(id) {
   const r = remotePlayers.get(id);
   if (r) { scene.remove(r.group); remotePlayers.delete(id); updateNetStatus(); }
 }
 
-// ---------- Réseau (PeerJS, pair-a-pair) ----------
+// ---------- Cache-cache ----------
+const game = {
+  mode: 'free', phase: null, hunterId: null,
+  alive: new Set(), scores: {}, phaseEnd: 0, dead: false,
+  timers: [], scoreInterval: null, readySet: new Set(),
+};
+let spectating = false;
+
+const banner = document.getElementById('banner');
+const notif = document.getElementById('notif');
+const blind = document.getElementById('blind');
+const gunEl = document.getElementById('gun');
+const deadOverlay = document.getElementById('deadOverlay');
+const crosshairEl = document.getElementById('crosshair');
+const resultBox = document.getElementById('resultBox');
+const povTag = document.getElementById('povTag');
+
+function myId() { return net.peer ? net.peer.id : 'local'; }
+function isHunter() { return game.mode === 'hide' && game.hunterId === myId(); }
+
+let notifTimeout = null;
+function showNotif(text, ms) {
+  notif.textContent = text;
+  notif.style.display = 'block';
+  clearTimeout(notifTimeout);
+  notifTimeout = setTimeout(() => notif.style.display = 'none', ms || 1500);
+}
+
+function clearGameTimers() {
+  for (const t of game.timers) clearTimeout(t);
+  game.timers = [];
+  if (game.scoreInterval) { clearInterval(game.scoreInterval); game.scoreInterval = null; }
+}
+
+function setSpectating(on) {
+  spectating = on && game.mode === 'hide' && !isHunter() && remotePlayers.has(game.hunterId);
+  povTag.style.display = spectating ? 'block' : 'none';
+}
+
+function startHideSeek(hunterId, hiders) {
+  game.mode = 'hide';
+  game.phase = 'hiding';
+  game.hunterId = hunterId;
+  game.alive = new Set(hiders);
+  game.scores = {};
+  for (const h of hiders) game.scores[h] = 0;
+  game.dead = false;
+  game.readySet = new Set();
+  hunterPtsBuffer = 0;
+  game.phaseEnd = Date.now() + HIDE_SECS * 1000;
+  deadOverlay.style.display = 'none';
+  resultBox.style.display = 'none';
+  setSpectating(false);
+
+  if (isHunter()) {
+    blind.style.display = 'flex';
+  } else {
+    showNotif('Tu es CACHÉ ! Pose des blocs pour te planquer. R quand tu es prêt.', 5000);
+  }
+  banner.style.display = 'block';
+  updateGameUI();
+}
+
+function startHunting() {
+  if (game.phase !== 'hiding') return;
+  game.phase = 'hunting';
+  game.phaseEnd = Date.now() + HUNT_SECS * 1000;
+  blind.style.display = 'none';
+  if (isHunter()) {
+    gunEl.style.display = 'block';
+    crosshairEl.classList.add('gun');
+    showNotif('A la chasse ! Clic gauche pour tirer.', 3000);
+  } else if (!game.dead) {
+    showNotif('Le chasseur arrive... ne bouge plus !', 3000);
+  }
+  updateGameUI();
+}
+
+function endHideSeek(who, scores) {
+  clearGameTimers();
+  game.phase = 'end';
+  game.mode = 'free';
+  gunEl.style.display = 'none';
+  crosshairEl.classList.remove('gun');
+  blind.style.display = 'none';
+  deadOverlay.style.display = 'none';
+  banner.style.display = 'none';
+  game.dead = false;
+  setSpectating(false);
+
+  let html = `<div class="win">${who === 'hunter' ? '🔫 LE CHASSEUR A GAGNÉ !' : '🌿 LES CACHÉS ONT GAGNÉ !'}</div>`;
+  const entries = Object.entries(scores || {});
+  if (entries.length) {
+    html += 'Points de discrétion :<br>';
+    for (const [id, pts] of entries) {
+      const label = id === myId() ? 'Toi' : 'Joueur ' + id.slice(-4);
+      html += `${label} : ${pts} pts<br>`;
+    }
+  }
+  resultBox.innerHTML = html;
+  resultBox.style.display = 'block';
+  document.exitPointerLock();
+}
+
+// --- côté hôte : lancement et déroulé ---
+function hostStartHunting() {
+  clearGameTimers();
+  net.broadcast({ t: 'hs_phase' }, null);
+  startHunting();
+
+  game.scoreInterval = setInterval(() => {
+    if (game.phase !== 'hunting') return;
+    const hp = getPlayerPos(game.hunterId);
+    if (!hp) return;
+    for (const id of game.alive) {
+      const pp = getPlayerPos(id);
+      if (!pp) continue;
+      const d = Math.hypot(hp.x - pp.x, hp.y - pp.y, hp.z - pp.z);
+      if (d < PROXIMITY_DIST) {
+        game.scores[id] = (game.scores[id] || 0) + 1;
+        net.broadcast({ t: 'hs_score', id, total: game.scores[id] }, null);
+        onScore(id, game.scores[id]);
+      }
+    }
+  }, 1000);
+
+  game.timers.push(setTimeout(() => {
+    net.broadcast({ t: 'hs_win', who: 'hiders', scores: game.scores }, null);
+    endHideSeek('hiders', game.scores);
+  }, HUNT_SECS * 1000));
+}
+
+function hostLaunchHideSeek() {
+  const players = [myId(), ...net.conns.map(c => c.peer)];
+  if (players.length < 2) { menuMsg.textContent = 'Il faut au moins 2 joueurs connectés !'; return; }
+  const hunter = players[Math.floor(Math.random() * players.length)];
+  const hiders = players.filter(p => p !== hunter);
+
+  net.broadcast({ t: 'hs_start', hunter, hiders }, null);
+  startHideSeek(hunter, hiders);
+
+  clearGameTimers();
+  game.timers.push(setTimeout(hostStartHunting, HIDE_SECS * 1000));
+}
+
+function hostMarkReady(id) {
+  if (game.phase !== 'hiding' || !game.alive.has(id)) return;
+  game.readySet.add(id);
+  const n = game.readySet.size, total = game.alive.size;
+  net.broadcast({ t: 'hs_readyinfo', n, total }, null);
+  showNotif(`Prêts : ${n}/${total}`, 1500);
+  if (n >= total) hostStartHunting();
+}
+
+function getPlayerPos(id) {
+  if (id === myId()) return player.pos;
+  const r = remotePlayers.get(id);
+  return r ? r.target : null;
+}
+
+// Côté chasseur, les alertes sont regroupées et affichées toutes les 15 s
+// pour ne pas lui révéler la position du caché en temps réel.
+let hunterPtsBuffer = 0;
+function onScore(id, total) {
+  if (game.hunterId === myId()) {
+    hunterPtsBuffer++;
+  } else if (id === myId()) {
+    showNotif('+1 point de discrétion (le chasseur est proche !) - total : ' + total, 1200);
+  }
+}
+setInterval(() => {
+  if (game.hunterId === myId() && game.phase === 'hunting' && hunterPtsBuffer > 0) {
+    showNotif('⚠️ ' + hunterPtsBuffer + ' point(s) de discrétion gagnés près de toi ces 15 dernières secondes !', 3500);
+    hunterPtsBuffer = 0;
+  }
+}, 15000);
+
+function onDead(id) {
+  game.alive.delete(id);
+  if (id === myId()) {
+    game.dead = true;
+    deadOverlay.style.display = 'flex';
+  }
+  if (net.isHost && game.phase === 'hunting' && game.alive.size === 0) {
+    net.broadcast({ t: 'hs_win', who: 'hunter', scores: game.scores }, null);
+    endHideSeek('hunter', game.scores);
+  }
+}
+
+function updateGameUI() {
+  if (game.mode !== 'hide') { banner.style.display = 'none'; return; }
+  const remain = Math.max(0, Math.ceil((game.phaseEnd - Date.now()) / 1000));
+  const mm = Math.floor(remain / 60), ss = String(remain % 60).padStart(2, '0');
+  if (game.phase === 'hiding') {
+    banner.innerHTML = `🙈 CACHE-TOI ! <b>${mm}:${ss}</b><div class="sub">${isHunter() ? 'Tu es le chasseur, patience...' : 'R = je suis prêt | Pose des blocs (rien casser !)'}</div>`;
+    blind.querySelector('.count').textContent = remain;
+  } else if (game.phase === 'hunting') {
+    const me = game.scores[myId()];
+    banner.innerHTML = `🔫 CHASSE EN COURS <b>${mm}:${ss}</b><div class="sub">${isHunter() ? 'Trouve et tire sur les joueurs cachés !' : (game.dead ? 'Éliminé - V pour voir le chasseur' : 'Points : ' + (me || 0) + ' | V = POV chasseur')}</div>`;
+  }
+}
+setInterval(updateGameUI, 250);
+
+// ---------- Tir ----------
+function shoot() {
+  gunEl.classList.remove('recoil');
+  void gunEl.offsetWidth;
+  gunEl.classList.add('recoil');
+
+  const dir = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
+  const origin = camera.position.clone();
+  const blockHit = raycastVoxel(GUN_RANGE);
+  const blockDist = blockHit ? blockHit.dist : Infinity;
+
+  let best = null, bestT = Infinity;
+  for (const [id, r] of remotePlayers) {
+    if (!game.alive.has(id)) continue;
+    const center = new THREE.Vector3(r.target.x, r.target.y + 0.9, r.target.z);
+    const toP = center.clone().sub(origin);
+    const t = toP.dot(dir);
+    if (t < 0 || t > GUN_RANGE) continue;
+    const closest = origin.clone().add(dir.clone().multiplyScalar(t));
+    if (closest.distanceTo(center) < GUN_HIT_RADIUS && t < blockDist && t < bestT) {
+      best = id; bestT = t;
+    }
+  }
+  if (best) {
+    net.broadcast({ t: 'hs_dead', id: best }, null);
+    onDead(best);
+    showNotif('🎯 Touché ! Joueur éliminé.', 2000);
+  }
+}
+
+// ---------- Réseau ----------
 const net = {
-  peer: null,
-  isHost: false,
-  conns: [],          // hôte : toutes les connexions ; client : [connexion vers l'hôte]
-  myColor: 0,
-  nextColor: 1,
+  peer: null, isHost: false, conns: [], myColor: 0, nextColor: 1,
 
   makeCode() {
     const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -271,16 +564,14 @@ const net = {
       const colorIdx = this.nextColor++;
       conn.on('open', () => {
         this.conns.push(conn);
-        conn.metadata_color = colorIdx;
-        // envoie l'état du monde (uniquement le diff) + sa couleur
         conn.send({ t: 'init', color: colorIdx, edits: [...edits.entries()] });
         updateNetStatus();
+        document.getElementById('hideSeekBtn').style.display = 'inline-block';
       });
       conn.on('data', d => this.onData(conn, d));
       conn.on('close', () => {
         this.conns = this.conns.filter(c => c !== conn);
         removeRemote(conn.peer);
-        // informe les autres
         this.broadcast({ t: 'leave', id: conn.peer }, null);
         updateNetStatus();
       });
@@ -311,57 +602,61 @@ const net = {
   },
 
   onData(fromConn, d) {
+    if (this.isHost && d.t !== 'init' && d.t !== 'hs_ready') this.broadcast(d, fromConn);
     if (d.t === 'pos') {
       const r = ensureRemote(d.id, d.color);
-      r.target = { x: d.p[0], y: d.p[1], z: d.p[2], yaw: d.yaw };
-      if (this.isHost) this.broadcast(d, fromConn); // relaie aux autres
+      r.target = { x: d.p[0], y: d.p[1], z: d.p[2], yaw: d.yaw, pitch: d.pitch || 0 };
     } else if (d.t === 'edit') {
       applyEdit(d.k, d.type, true);
-      if (this.isHost) this.broadcast(d, fromConn);
     } else if (d.t === 'leave') {
       removeRemote(d.id);
+    } else if (d.t === 'hs_start') {
+      startHideSeek(d.hunter, d.hiders);
+    } else if (d.t === 'hs_phase') {
+      startHunting();
+    } else if (d.t === 'hs_ready') {
+      if (this.isHost) hostMarkReady(d.id);
+    } else if (d.t === 'hs_readyinfo') {
+      showNotif(`Prêts : ${d.n}/${d.total}`, 1500);
+    } else if (d.t === 'hs_score') {
+      game.scores[d.id] = d.total;
+      onScore(d.id, d.total);
+    } else if (d.t === 'hs_dead') {
+      onDead(d.id);
+    } else if (d.t === 'hs_win') {
+      endHideSeek(d.who, d.scores);
     }
   },
 
   broadcast(d, except) {
     for (const c of this.conns) if (c !== except && c.open) c.send(d);
   },
-
   sendEdit(k, type) {
     if (!this.peer) return;
     this.broadcast({ t: 'edit', k, type }, null);
   },
-
   sendPos() {
     if (!this.peer || !this.conns.length) return;
     this.broadcast({
-      t: 'pos',
-      id: this.peer.id,
-      color: this.myColor,
-      p: [player.pos.x, player.pos.y, player.pos.z],
-      yaw: player.yaw,
+      t: 'pos', id: this.peer.id, color: this.myColor,
+      p: [player.pos.x, player.pos.y, player.pos.z], yaw: player.yaw, pitch: player.pitch,
     }, null);
   },
 };
-
 setInterval(() => net.sendPos(), 80);
 
 const statusEl = document.getElementById('netstatus');
 function setStatus(s) { statusEl.textContent = s; }
 function updateNetStatus() {
   if (!net.peer) { setStatus(''); return; }
-  const n = net.isHost ? net.conns.length : remotePlayers.size;
-  setStatus(net.isHost
-    ? `Hôte - ${net.conns.length} joueur(s) connecté(s)`
-    : 'Connecté a la partie');
+  setStatus(net.isHost ? `Hôte - ${net.conns.length} joueur(s) connecté(s)` : 'Connecté a la partie');
 }
 
 // ---------- Joueur local ----------
 const player = {
   pos: new THREE.Vector3(0.5, heightAt(0, 0) + 3, 0.5),
   vel: new THREE.Vector3(),
-  onGround: false,
-  yaw: 0, pitch: 0,
+  onGround: false, yaw: 0, pitch: 0,
 };
 
 function isSolid(x, y, z) {
@@ -389,10 +684,7 @@ function showPlay() {
   document.getElementById('joinRow').style.display = 'none';
 }
 
-document.getElementById('soloBtn').onclick = () => {
-  showPlay();
-  playBtn.click();
-};
+document.getElementById('soloBtn').onclick = () => { showPlay(); playBtn.click(); };
 
 document.getElementById('hostBtn').onclick = () => {
   menuMsg.textContent = 'Création de la partie...';
@@ -425,6 +717,11 @@ document.getElementById('joinGo').onclick = () => {
   });
 };
 
+document.getElementById('hideSeekBtn').onclick = () => {
+  hostLaunchHideSeek();
+  if (game.mode === 'hide') renderer.domElement.requestPointerLock();
+};
+
 playBtn.onclick = () => renderer.domElement.requestPointerLock();
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
@@ -434,16 +731,29 @@ document.addEventListener('pointerlockchange', () => {
 // ---------- Contrôles ----------
 const keys = {};
 document.addEventListener('mousemove', e => {
-  if (!locked) return;
+  if (!locked || spectating) return;
+  if (isHunter() && game.phase === 'hiding') return;
   player.yaw -= e.movementX * 0.0025;
   player.pitch -= e.movementY * 0.0025;
   player.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, player.pitch));
 });
 document.addEventListener('keydown', e => {
   keys[e.code] = true;
-  if (locked && e.code.startsWith('Digit')) {
+  if (!locked) return;
+  if (e.code.startsWith('Digit')) {
     const n = parseInt(e.code.slice(5)) - 1;
     if (n >= 0 && n < PLACEABLE.length) { selected = n; updateHud(); }
+  }
+  // R = prêt (cachés, pendant la phase de cachette)
+  if (e.code === 'KeyR' && game.mode === 'hide' && game.phase === 'hiding' && !isHunter() && !game.dead) {
+    if (net.isHost) hostMarkReady(myId());
+    else net.broadcast({ t: 'hs_ready', id: myId() }, null);
+    showNotif('✔ Tu es prêt !', 1500);
+  }
+  // V = POV du chasseur (cachés et éliminés)
+  if (e.code === 'KeyV' && game.mode === 'hide' && !isHunter()) {
+    setSpectating(!spectating);
+    if (!spectating && !remotePlayers.has(game.hunterId)) showNotif('Chasseur introuvable pour le moment', 1500);
   }
 });
 document.addEventListener('keyup', e => keys[e.code] = false);
@@ -453,8 +763,9 @@ document.addEventListener('wheel', e => {
   updateHud();
 });
 
-// ---------- Casser / poser ----------
-function raycastVoxel() {
+// ---------- Raycast voxel ----------
+function raycastVoxel(maxDist) {
+  const max = maxDist || REACH;
   const dir = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
   const pos = camera.position.clone();
   let x = Math.floor(pos.x), y = Math.floor(pos.y), z = Math.floor(pos.z);
@@ -464,20 +775,34 @@ function raycastVoxel() {
   let tMaxY = tDeltaY * (stepY > 0 ? (y + 1 - pos.y) : (pos.y - y));
   let tMaxZ = tDeltaZ * (stepZ > 0 ? (z + 1 - pos.z) : (pos.z - z));
   let face = null, t = 0;
-  while (t < REACH) {
+  while (t < max) {
     if (tMaxX < tMaxY && tMaxX < tMaxZ) { x += stepX; t = tMaxX; tMaxX += tDeltaX; face = [-stepX, 0, 0]; }
     else if (tMaxY < tMaxZ) { y += stepY; t = tMaxY; tMaxY += tDeltaY; face = [0, -stepY, 0]; }
     else { z += stepZ; t = tMaxZ; tMaxZ += tDeltaZ; face = [0, 0, -stepZ]; }
-    if (world.has(key(x, y, z))) return { x, y, z, face };
+    if (world.has(key(x, y, z))) return { x, y, z, face, dist: t };
   }
   return null;
 }
 
 document.addEventListener('mousedown', e => {
-  if (!locked) return;
+  if (!locked || game.dead || spectating) return;
+  if (isHunter() && game.phase === 'hiding') return;
+
+  // le chasseur tire, il ne modifie pas la map
+  if (isHunter()) {
+    if (game.phase === 'hunting' && e.button === 0) shoot();
+    return;
+  }
+
   const hit = raycastVoxel();
   if (!hit) return;
+
   if (e.button === 0) {
+    // en cache-cache, les cachés ne peuvent RIEN casser
+    if (game.mode === 'hide') {
+      showNotif('Impossible de casser des blocs en cache-cache !', 1500);
+      return;
+    }
     applyEdit(key(hit.x, hit.y, hit.z), null, false);
   } else if (e.button === 2) {
     const nx = hit.x + hit.face[0], ny = hit.y + hit.face[1], nz = hit.z + hit.face[2];
@@ -518,7 +843,9 @@ function loop(now) {
     fpsTime = 0; fpsCount = 0;
   }
 
-  if (locked) {
+  const frozen = (isHunter() && game.phase === 'hiding') || game.dead || spectating;
+
+  if (locked && !frozen) {
     const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
     const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
     const move = new THREE.Vector3();
@@ -526,16 +853,14 @@ function loop(now) {
     if (keys['KeyS'] || keys['ArrowDown']) move.sub(fwd);
     if (keys['KeyD'] || keys['ArrowRight']) move.add(right);
     if (keys['KeyA'] || keys['ArrowLeft']) move.sub(right);
-    if (move.lengthSq() > 0) move.normalize().multiplyScalar(SPEED);
+    const sprint = (keys['ShiftLeft'] || keys['ShiftRight']) ? SPRINT_MULT : 1;
+    if (move.lengthSq() > 0) move.normalize().multiplyScalar(SPEED * sprint);
 
     player.vel.x = move.x;
     player.vel.z = move.z;
     player.vel.y -= GRAVITY * dt;
 
-    if (keys['Space'] && player.onGround) {
-      player.vel.y = JUMP;
-      player.onGround = false;
-    }
+    if (keys['Space'] && player.onGround) { player.vel.y = JUMP; player.onGround = false; }
 
     const p = player.pos;
     const test = p.clone();
@@ -548,14 +873,24 @@ function loop(now) {
     else { if (player.vel.y < 0) player.onGround = true; player.vel.y = 0; }
 
     if (p.y < -20) { p.set(0.5, heightAt(0, 0) + 3, 0.5); player.vel.set(0, 0, 0); }
+  }
 
-    camera.position.set(p.x, p.y + PLAYER_H - 0.15, p.z);
+  // caméra : vue normale ou POV du chasseur
+  const hunterRemote = spectating ? remotePlayers.get(game.hunterId) : null;
+  if (hunterRemote) {
+    const t = hunterRemote.target;
+    camera.position.set(t.x, t.y + PLAYER_H - 0.15, t.z);
+    camera.rotation.order = 'YXZ';
+    camera.rotation.y = t.yaw;
+    camera.rotation.x = t.pitch || 0;
+  } else {
+    if (spectating) setSpectating(false);
+    camera.position.set(player.pos.x, player.pos.y + PLAYER_H - 0.15, player.pos.z);
     camera.rotation.order = 'YXZ';
     camera.rotation.y = player.yaw;
     camera.rotation.x = player.pitch;
   }
 
-  // interpolation des joueurs distants
   for (const r of remotePlayers.values()) {
     const g = r.group;
     g.position.lerp(new THREE.Vector3(r.target.x, r.target.y, r.target.z), 0.25);
