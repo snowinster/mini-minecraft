@@ -130,15 +130,15 @@
   }
   .input:focus { border-color: #9fe870; }
   #codeInput { text-transform: uppercase; letter-spacing: 5px; }
-  .swLabel { font-size: 10px; letter-spacing: 2px; color: #ffd94a; text-transform: uppercase; margin: 6px 0 6px; }
-  #swatches { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin-bottom: 4px; }
-  .sw {
-    width: 26px; height: 26px; border-radius: 6px; cursor: pointer;
-    border: 2px solid rgba(255,255,255,.25); box-shadow: 0 2px 4px rgba(0,0,0,.4);
-    transition: transform .08s;
+  #paintInfo {
+    position: fixed; bottom: 112px; left: 50%; transform: translateX(-50%);
+    color: #fff; font-size: 13px; background: rgba(0,0,0,.55); padding: 8px 16px;
+    border-radius: 6px; z-index: 10; display: none;
   }
-  .sw:hover { transform: scale(1.12); }
-  .sw.sel { border-color: #fff; transform: scale(1.15); box-shadow: 0 0 8px rgba(255,255,255,.5); }
+  #paintInfo .pc {
+    display: inline-block; width: 14px; height: 14px; border-radius: 3px;
+    vertical-align: -2px; border: 1px solid #fff; margin-right: 8px;
+  }
   #joinRow { display: none; gap: 8px; align-items: center; }
   #joinRow .btn { width: auto; min-width: 90px; margin: 0; }
   #roomInfo {
@@ -198,6 +198,7 @@
 <div id="flash"></div>
 <div id="vignette"></div>
 <div id="ammo"></div>
+<div id="paintInfo"><span class="pc" id="paintSwatch"></span>Clic gauche : peindre ton perso &nbsp;|&nbsp; Clic droit : pipette (couleur du bloc visé)</div>
 <div id="blind"><h2>Les joueurs se cachent...</h2><div class="count">60</div><p>Tu es le CHASSEUR. Prépare-toi !</p></div>
 <div id="deadOverlay"><div>💀 Tu as été éliminé !</div></div>
 
@@ -209,8 +210,6 @@
     <div id="menuHome" class="view">
       <div id="resultBox"></div>
       <input id="nameInput" class="input" maxlength="12" placeholder="TON PSEUDO">
-      <div class="swLabel">Couleur du perso — vert / marron pour te camoufler 🌿</div>
-      <div id="swatches"></div>
       <button class="btn" id="soloBtn">🌍 JOUER EN SOLO</button>
       <button class="btn alt" id="hostBtn">🎮 CRÉER UNE PARTIE EN LIGNE</button>
       <button class="btn alt" id="joinBtn">🔑 REJOINDRE UNE PARTIE</button>
@@ -234,9 +233,9 @@
       <div class="rules">
         <div class="rItem"><div class="rIcon">🎮</div><div><b>Contrôles</b> : ZQSD / WASD pour bouger, <kbd>MAJ</kbd> sprint, <kbd>ESPACE</kbd> sauter. Clic gauche : casser / tirer. Clic droit : poser un bloc. Toutes les touches sont modifiables dans les Réglages.</div></div>
         <div class="rItem"><div class="rIcon">🙈</div><div><b>Cache-cache</b> : un chasseur est tiré au sort. Les cachés ont 60 s pour se planquer (<kbd>R</kbd> = prêt en avance), puis 3 min de chasse pendant que la nuit tombe.</div></div>
-        <div class="rItem"><div class="rIcon">❤️</div><div><b>Survie</b> : les cachés ont 2 vies et peuvent poser des blocs (mais rien casser). Le chasseur a 5 balles par chargeur, rechargement 2,5 s.</div></div>
+        <div class="rItem"><div class="rIcon">❤️</div><div><b>Survie</b> : les cachés ont 2 vies mais ne peuvent pas toucher aux blocs — leur arme, c'est le camouflage. Le chasseur a 5 balles par chargeur, rechargement 2,5 s.</div></div>
         <div class="rItem"><div class="rIcon">🎭</div><div><b>Leurre</b> : <kbd>F</kbd> pose un faux joueur (1 par partie) pour piéger le chasseur.</div></div>
-        <div class="rItem"><div class="rIcon">📷</div><div><b>Vue 3e personne</b> : <kbd>C</kbd> pour te voir dans le décor et vérifier ton camouflage (le chasseur, lui, vise en 1re personne). Choisis une couleur de perso camouflage dans le menu !</div></div>
+        <div class="rItem"><div class="rIcon">🎨</div><div><b>Peinture camouflage</b> : <kbd>C</kbd> passe en vue 3e personne. Là, clic droit sur un bloc = pipette (tu prends sa couleur exacte), clic gauche sur ton perso = tu le peins pixel par pixel. Fonds-toi dans le décor !</div></div>
         <div class="rItem"><div class="rIcon">⭐</div><div><b>Points</b> : reste a moins de 20 blocs du chasseur sans te faire voir pour gagner des points de discrétion.</div></div>
         <div class="rItem"><div class="rIcon">🧊</div><div><b>Chat glacé</b> : variante où chaque joueur touché devient chasseur a son tour !</div></div>
         <div class="rItem"><div class="rIcon">🫀</div><div><b>Tension</b> : ton écran rougit et ton cœur bat quand le chasseur approche. <kbd>V</kbd> : voir la vue du chasseur (cachés / éliminés).</div></div>
@@ -568,43 +567,94 @@ generateWorld();
 // ---------- Joueurs distants ----------
 const remotePlayers = new Map();
 
+function cssColor(c) { return '#' + (c >>> 0).toString(16).padStart(6, '0'); }
+
+// Chaque partie du corps porte une petite texture 8x8 peignable pixel
+// par pixel (camouflage en temps réel via la vue 3e personne).
+const SKIN_RES = 8;
+function makePaintablePart(sx, sy, sz, baseColor, partName) {
+  const canvas = document.createElement('canvas');
+  canvas.width = SKIN_RES;
+  canvas.height = SKIN_RES;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = cssColor(baseColor);
+  ctx.fillRect(0, 0, SKIN_RES, SKIN_RES);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(sx, sy, sz),
+    new THREE.MeshLambertMaterial({ map: tex })
+  );
+  mesh.userData.paint = { canvas, ctx, tex };
+  mesh.userData.partName = partName;
+  return mesh;
+}
+
 function makePlayerMesh(color) {
   const g = new THREE.Group();
-  const mat = new THREE.MeshLambertMaterial({ color });
-  const skin = new THREE.MeshLambertMaterial({ color: 0xffd9b3 });
-  const dark = new THREE.MeshLambertMaterial({ color: new THREE.Color(color).multiplyScalar(0.55) });
+  const dark = new THREE.Color(color).multiplyScalar(0.55).getHex();
+  const parts = {};
 
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.55, 0.28), mat);
+  const torso = makePaintablePart(0.5, 0.55, 0.28, color, 'torso');
   torso.position.y = 0.95;
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.45, 0.45), skin);
+  const head = makePaintablePart(0.45, 0.45, 0.45, 0xffd9b3, 'head');
   head.position.y = 1.48;
   g.add(torso, head);
+  parts.torso = torso;
+  parts.head = head;
 
   // Bras et jambes avec pivot a l'épaule / la hanche pour l'animation de marche
   const limbs = {};
   for (const [name, lx, isArm] of [['lLeg', -0.13, false], ['rLeg', 0.13, false], ['lArm', -0.33, true], ['rArm', 0.33, true]]) {
     const pivot = new THREE.Group();
     pivot.position.set(lx, isArm ? 1.18 : 0.68, 0);
-    const m = new THREE.Mesh(
-      new THREE.BoxGeometry(isArm ? 0.14 : 0.2, isArm ? 0.55 : 0.65, isArm ? 0.14 : 0.2),
-      isArm ? mat : dark
-    );
+    const m = makePaintablePart(isArm ? 0.14 : 0.2, isArm ? 0.55 : 0.65, isArm ? 0.14 : 0.2, isArm ? color : dark, name);
     m.position.y = isArm ? -0.24 : -0.33;
     pivot.add(m);
     g.add(pivot);
     limbs[name] = pivot;
+    parts[name] = m;
   }
   g.userData.limbs = limbs;
-  g.userData.mats = { mat, dark };
+  g.userData.parts = parts;
   return g;
 }
 
-// Change la couleur d'un perso déjà créé (choix de camouflage en jeu)
-function setMeshColor(group, color) {
-  const m = group.userData.mats;
-  if (!m) return;
-  m.mat.color.setHex(color);
-  m.dark.color.setHex(color).multiplyScalar(0.55);
+// ---------- Skin peint (64 pixels par partie du corps) ----------
+const SKIN_PARTS = ['head', 'torso', 'lArm', 'rArm', 'lLeg', 'rLeg'];
+const playerSkins = new Map(); // skins reçus des autres joueurs
+
+function defaultSkin(base) {
+  const dark = new THREE.Color(base).multiplyScalar(0.55).getHex();
+  const s = {};
+  for (const n of SKIN_PARTS) {
+    const c = n === 'head' ? 0xffd9b3 : (n.endsWith('Leg') ? dark : base);
+    s[n] = new Array(SKIN_RES * SKIN_RES).fill(c);
+  }
+  return s;
+}
+
+let mySkin;
+try { mySkin = JSON.parse(localStorage.getItem('mmc_skin') || 'null'); } catch (e) { mySkin = null; }
+if (!mySkin || !SKIN_PARTS.every(n => Array.isArray(mySkin[n]) && mySkin[n].length === SKIN_RES * SKIN_RES)) {
+  mySkin = defaultSkin(myColorHex);
+}
+
+function applySkin(group, skin) {
+  if (!skin) return;
+  const parts = group.userData.parts || {};
+  for (const name of SKIN_PARTS) {
+    const mesh = parts[name], arr = skin[name];
+    if (!mesh || !arr) continue;
+    const p = mesh.userData.paint;
+    for (let i = 0; i < arr.length; i++) {
+      p.ctx.fillStyle = cssColor(arr[i] || 0);
+      p.ctx.fillRect(i % SKIN_RES, Math.floor(i / SKIN_RES), 1, 1);
+    }
+    p.tex.needsUpdate = true;
+  }
 }
 
 // Pseudo affiché au-dessus de la tête (masqué par les blocs : ne trahit pas les cachés)
@@ -665,15 +715,10 @@ function ensureRemote(id, color) {
   scene.add(group);
   const r = { group, color, target: { x: 0, y: -100, z: 0, yaw: 0, pitch: 0 }, walkPhase: 0, name: null, lastSeen: performance.now() };
   remotePlayers.set(id, r);
+  if (playerSkins.has(id)) applySkin(group, playerSkins.get(id));
   updateNetStatus();
   updateHunterModels();
   return r;
-}
-
-function setRemoteColor(r, color) {
-  if (r.color === color) return;
-  r.color = color;
-  setMeshColor(r.group, color);
 }
 function removeRemote(id) {
   const r = remotePlayers.get(id);
@@ -695,6 +740,7 @@ setInterval(() => {
 
 // ---------- Vue 3e personne : modèle de son propre perso ----------
 const selfMesh = makePlayerMesh(myColorHex);
+applySkin(selfMesh, mySkin);
 selfMesh.visible = false;
 scene.add(selfMesh);
 let selfWalkPhase = 0;
@@ -752,7 +798,65 @@ function myId() { return net.peer ? net.peer.id : 'local'; }
 function isHunter() { return game.mode === 'hide' && game.hunters.has(myId()); }
 
 let thirdPerson = false;
-function setThirdPerson(on) { thirdPerson = on; }
+function setThirdPerson(on) {
+  thirdPerson = on;
+  updatePaintUI();
+}
+
+// ---------- Peinture camouflage (en vue 3e personne) ----------
+const paintInfoEl = document.getElementById('paintInfo');
+const paintSwatchEl = document.getElementById('paintSwatch');
+let paintColor = 0x5aa832;
+const paintRaycaster = new THREE.Raycaster();
+
+function updatePaintUI() {
+  paintInfoEl.style.display = (thirdPerson && !isHunter()) ? 'block' : 'none';
+  paintSwatchEl.style.background = cssColor(paintColor);
+}
+
+// Clic gauche en 3e personne : peint le pixel visé de son propre perso
+function paintSelf() {
+  paintRaycaster.setFromCamera({ x: 0, y: 0 }, camera);
+  const hits = paintRaycaster.intersectObject(selfMesh, true);
+  const hit = hits.find(h => h.object.userData.paint && h.uv);
+  if (!hit) { showNotif('Vise ton personnage pour le peindre', 1200); return; }
+  const p = hit.object.userData.paint;
+  const px = Math.min(SKIN_RES - 1, Math.floor(hit.uv.x * SKIN_RES));
+  const py = Math.min(SKIN_RES - 1, Math.floor((1 - hit.uv.y) * SKIN_RES));
+  p.ctx.fillStyle = cssColor(paintColor);
+  p.ctx.fillRect(px, py, 1, 1);
+  p.tex.needsUpdate = true;
+  mySkin[hit.object.userData.partName][py * SKIN_RES + px] = paintColor;
+  sfx.place();
+  queueSkinSync();
+}
+
+// Clic droit en 3e personne : pipette, prend la couleur exacte du bloc visé
+function pickColor() {
+  const hit = raycastVoxel(REACH, headPos());
+  if (!hit) { showNotif('Vise un bloc pour prendre sa couleur', 1200); return; }
+  const t = world.get(key(hit.x, hit.y, hit.z));
+  if (!t) return;
+  paintColor = (hit.face && hit.face[1] === 1) ? TYPES[t].top : TYPES[t].side;
+  updatePaintUI();
+  sfx.reload();
+  showNotif('🎨 Couleur "' + TYPES[t].name + '" sélectionnée', 1200);
+}
+
+// Diffusion du skin aux autres joueurs (throttle + sauvegarde locale)
+let skinSyncTimer = null;
+function queueSkinSync() {
+  if (skinSyncTimer) return;
+  skinSyncTimer = setTimeout(() => {
+    skinSyncTimer = null;
+    localStorage.setItem('mmc_skin', JSON.stringify(mySkin));
+    net.broadcast({ t: 'skin', id: myId(), skin: mySkin }, null);
+  }, 400);
+}
+// Renvoi périodique pour les joueurs arrivés en cours de route
+setInterval(() => {
+  if (net.peer && net.conns.length) net.broadcast({ t: 'skin', id: myId(), skin: mySkin }, null);
+}, 6000);
 
 const playerNames = new Map();
 function nameOf(id) {
@@ -782,8 +886,9 @@ function startReload() {
 // ---------- Leurres (faux joueurs, 1 par partie) ----------
 const decoys = new Map();
 let decoyUsed = false;
-function spawnDecoy(id, p, color, name, yaw) {
+function spawnDecoy(id, p, color, name, yaw, skin) {
   const group = makePlayerMesh(color);
+  if (skin) applySkin(group, skin);
   if (name) group.add(makeNameSprite(name));
   group.position.set(p[0], p[1], p[2]);
   group.rotation.y = yaw || 0;
@@ -801,8 +906,8 @@ function placeDecoy() {
   decoyUsed = true;
   const id = 'decoy-' + myId() + '-' + Math.floor(Math.random() * 1e9);
   const p = [player.pos.x, player.pos.y, player.pos.z];
-  spawnDecoy(id, p, myColorHex, myName, player.yaw);
-  net.broadcast({ t: 'hs_decoy', id, p, color: myColorHex, name: myName, yaw: player.yaw }, null);
+  spawnDecoy(id, p, myColorHex, myName, player.yaw, mySkin);
+  net.broadcast({ t: 'hs_decoy', id, p, color: myColorHex, name: myName, yaw: player.yaw, skin: mySkin }, null);
   sfx.decoy();
   showNotif('🎭 Leurre posé !', 2000);
 }
@@ -848,11 +953,13 @@ function startHideSeek(hunterId, hiders, mode) {
   setSpectating(false);
   updateHunterModels();
   updateAmmoUI();
+  updatePaintUI();
+  hud.style.display = 'none'; // pas de blocs pendant le cache-cache
 
   if (isHunter()) {
     blind.style.display = 'flex';
   } else {
-    showNotif('🙈 Tu es CACHÉ ! Le chasseur est ' + nameOf(hunterId), 4000);
+    showNotif('🙈 Tu es CACHÉ ! Le chasseur est ' + nameOf(hunterId) + ' - C pour te camoufler', 4000);
   }
   banner.style.display = 'block';
   updateGameUI();
@@ -894,6 +1001,8 @@ function endHideSeek(who, scores) {
   clearDecoys();
   updateHunterModels();
   updateAmmoUI();
+  updatePaintUI();
+  hud.style.display = 'flex';
   vignetteEl.style.opacity = 0;
   sfx.win();
 
@@ -1200,7 +1309,6 @@ const net = {
       const r = ensureRemote(d.id, d.color);
       r.target = { x: d.p[0], y: d.p[1], z: d.p[2], yaw: d.yaw, pitch: d.pitch || 0 };
       r.lastSeen = performance.now();
-      setRemoteColor(r, d.color);
       if (d.name) { playerNames.set(d.id, d.name); setRemoteName(r, d.name); }
     } else if (d.t === 'edit') {
       applyEdit(d.k, d.type, true);
@@ -1227,10 +1335,14 @@ const net = {
         sfx.hit();
         showNotif('💥 Touché ! Il te reste ' + d.left + ' vie(s), cours !', 2500);
       }
+    } else if (d.t === 'skin') {
+      playerSkins.set(d.id, d.skin);
+      const rp = remotePlayers.get(d.id);
+      if (rp) applySkin(rp.group, d.skin);
     } else if (d.t === 'hs_convert') {
       onConvert(d.id);
     } else if (d.t === 'hs_decoy') {
-      spawnDecoy(d.id, d.p, d.color, d.name, d.yaw);
+      spawnDecoy(d.id, d.p, d.color, d.name, d.yaw, d.skin);
     } else if (d.t === 'hs_decoypop') {
       if (d.id.includes(myId())) showNotif('💨 Ton leurre a été détruit !', 2000);
       popDecoy(d.id);
@@ -1297,24 +1409,6 @@ nameInput.addEventListener('input', () => {
   localStorage.setItem('mmc_name', myName);
 });
 
-// Choix de la couleur du perso (sauvegardé, diffusé aux autres joueurs)
-const swEl = document.getElementById('swatches');
-function renderSwatches() {
-  swEl.innerHTML = '';
-  for (const c of SKIN_COLORS) {
-    const d = document.createElement('div');
-    d.className = 'sw' + (c === myColorHex ? ' sel' : '');
-    d.style.background = '#' + c.toString(16).padStart(6, '0');
-    d.onclick = () => {
-      myColorHex = c;
-      localStorage.setItem('mmc_color', String(c));
-      setMeshColor(selfMesh, c);
-      renderSwatches();
-    };
-    swEl.appendChild(d);
-  }
-}
-renderSwatches();
 
 // Navigation entre les pages du menu
 function showView(name) {
@@ -1557,14 +1651,23 @@ document.addEventListener('mousedown', e => {
     return;
   }
 
-  const hit = raycastVoxel(REACH, thirdPerson ? headPos() : null);
+  // Vue 3e personne = atelier camouflage : peindre son perso / pipette
+  if (thirdPerson) {
+    if (e.button === 0) paintSelf();
+    else if (e.button === 2) pickColor();
+    return;
+  }
+
+  // Les cachés ne peuvent NI casser NI poser de blocs
+  if (game.mode === 'hide') {
+    showNotif('Pas de blocs en cache-cache ! Appuie sur C pour te peindre en camouflage.', 2000);
+    return;
+  }
+
+  const hit = raycastVoxel();
   if (!hit) return;
 
   if (e.button === 0) {
-    if (game.mode === 'hide') {
-      showNotif('Impossible de casser des blocs en cache-cache !', 1500);
-      return;
-    }
     applyEdit(key(hit.x, hit.y, hit.z), null, false);
     sfx.break();
   } else if (e.button === 2) {
@@ -1731,9 +1834,10 @@ function loop(now) {
     L.rArm.rotation.x = swing * 0.8;
   }
 
-  // Surbrillance du bloc visé
-  if (locked && !frozen && !isHunter()) {
-    const aim = raycastVoxel(REACH, thirdPerson ? headPos() : null);
+  // Surbrillance du bloc visé (seulement quand on peut construire :
+  // mode libre, 1re personne)
+  if (locked && !frozen && !isHunter() && game.mode !== 'hide' && !thirdPerson) {
+    const aim = raycastVoxel();
     if (aim) { hlBox.position.set(aim.x + 0.5, aim.y + 0.5, aim.z + 0.5); hlBox.visible = true; }
     else hlBox.visible = false;
   } else {
