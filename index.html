@@ -295,7 +295,6 @@
       <button class="btn" id="playBtn" style="display:none">Entrer dans le monde</button>
       <button class="btn red" id="practiceBtn" style="display:none">Entraînement cachette</button>
       <button class="btn red" id="hideSeekBtn" style="display:none">Lancer le cache-cache</button>
-      <button class="btn ice" id="chatBtn" style="display:none">Lancer le chat glacé 🧊</button>
       <div class="btnRow">
         <button class="btn gray" id="rulesBtn">Comment jouer</button>
         <button class="btn gray" id="settingsBtn">Options...</button>
@@ -312,7 +311,6 @@
         <div class="rItem"><div class="rIcon">🎭</div><div><b>Leurre</b> : <kbd>F</kbd> pose un faux joueur (1 par partie) pour piéger le chasseur.</div></div>
         <div class="rItem"><div class="rIcon">🎨</div><div><b>Peinture camouflage</b> : <kbd>C</kbd> bascule la vue 1re/3e personne (les cachés démarrent en 3e personne). <kbd>P</kbd> ouvre l'atelier : souris = pinceau, clic droit = pipette au pixel près sur les blocs, clic gauche = peindre, clic molette maintenu = tourner autour du perso, molette = zoom. Fonds-toi dans le décor !</div></div>
         <div class="rItem"><div class="rIcon">⭐</div><div><b>Points</b> : reste a moins de 20 blocs du chasseur sans te faire voir pour gagner des points de discrétion.</div></div>
-        <div class="rItem"><div class="rIcon">🧊</div><div><b>Chat glacé</b> : variante où chaque joueur touché devient chasseur a son tour !</div></div>
         <div class="rItem"><div class="rIcon">🫀</div><div><b>Tension</b> : ton écran rougit et ton cœur bat quand le chasseur approche. <kbd>V</kbd> : voir la vue du chasseur (cachés / éliminés).</div></div>
       </div>
       <button class="btn gray" id="rulesBack">← RETOUR</button>
@@ -325,7 +323,9 @@
       <div class="setRow"><label>🖱️ Sensibilité</label><input type="range" id="sensSlider" min="20" max="300"><span class="setVal" id="sensVal"></span></div>
       <div class="setGroupTitle">Touches — clique puis appuie sur une touche</div>
       <div id="bindList"></div>
-      <button class="btn red" id="resetBtn">RÉINITIALISER LES RÉGLAGES</button>
+      <div class="setGroupTitle">Map solo</div>
+      <button class="btn red" id="resetMapBtn">Réinitialiser ma map solo</button>
+      <button class="btn red" id="resetBtn">Réinitialiser les réglages</button>
       <button class="btn gray" id="settingsBack">← RETOUR</button>
     </div>
   </div>
@@ -337,9 +337,13 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
 <script>
 // ---------- Config ----------
-const WORLD = 32; // côté de la map en blocs (petite = parties plus rythmées)
+// Map compacte en multijoueur (parties rythmées), grande map en solo
+// (construction libre, sauvegardée dans le navigateur).
+const WORLD_MULTI = 32, WORLD_SOLO = 96;
+let WORLD = WORLD_MULTI;
+let soloMode = false;
 const GRAVITY = 26, JUMP = 9, SPEED = 6, SPRINT_MULT = 1.65, PLAYER_H = 1.7, REACH = 6;
-const MAX_INSTANCES = 20000;
+const MAX_INSTANCES = 60000;
 const PEER_PREFIX = 'minimc-fr-';
 const HIDE_SECS = 60, HUNT_SECS = 240; // round total : 5 min (1 min cachette + 4 min chasse)
 const RADAR_EVERY_MS = 30000, RADAR_SHOW_MS = 3000;
@@ -508,11 +512,15 @@ scene.add(moon);
 const FIREFLY_N = 24;
 const fireflyAnchors = [];
 const fireflyGeo = new THREE.BufferGeometry();
-for (let i = 0; i < FIREFLY_N; i++) {
-  const x = (Math.random() - 0.5) * WORLD * 0.9;
-  const z = (Math.random() - 0.5) * WORLD * 0.9;
-  fireflyAnchors.push({ x, z, y: heightAt(Math.floor(x), Math.floor(z)) + 1.6, ph: Math.random() * 10 });
+function resetFireflies() {
+  fireflyAnchors.length = 0;
+  for (let i = 0; i < FIREFLY_N; i++) {
+    const x = (Math.random() - 0.5) * WORLD * 0.9;
+    const z = (Math.random() - 0.5) * WORLD * 0.9;
+    fireflyAnchors.push({ x, z, y: heightAt(Math.floor(x), Math.floor(z)) + 1.6, ph: Math.random() * 10 });
+  }
 }
+resetFireflies();
 fireflyGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(FIREFLY_N * 3), 3));
 const fireflyMat = new THREE.PointsMaterial({
   color: 0xd8ff6a, size: 0.14, transparent: true, opacity: 0,
@@ -707,7 +715,19 @@ function applyEdit(k, type, fromNetwork) {
   else world.set(k, type);
   queueRebuild();
   if (!fromNetwork) net.sendEdit(k, type);
+  if (soloMode) queueSoloSave();
 }
+
+// En solo, les constructions sont sauvegardées dans le navigateur
+let soloSaveTimer = null;
+function saveSoloEdits() {
+  try { localStorage.setItem('mmc_world_solo', JSON.stringify([...edits.entries()])); } catch (e) {}
+}
+function queueSoloSave() {
+  if (soloSaveTimer) return;
+  soloSaveTimer = setTimeout(() => { soloSaveTimer = null; saveSoloEdits(); }, 1000);
+}
+addEventListener('beforeunload', () => { if (soloMode) saveSoloEdits(); });
 
 // ---------- Génération 100% déterministe ----------
 // Hash en arithmétique ENTIÈRE : résultat identique sur tous les
@@ -813,6 +833,8 @@ function generateWorld() {
     if (t === null) world.delete(k);
     else world.set(k, t);
   }
+
+  resetFireflies();
 
   // Fleurs sur les blocs d'herbe libres
   decorGroup.clear();
@@ -1727,7 +1749,6 @@ const net = {
         conn.send({ t: 'init', edits: [...edits.entries()] });
         updateNetStatus();
         document.getElementById('hideSeekBtn').style.display = 'block';
-        document.getElementById('chatBtn').style.display = 'block';
       });
       conn.on('data', d => this.onData(conn, d));
       conn.on('close', () => {
@@ -1749,6 +1770,8 @@ const net = {
       conn.on('open', () => { opened = true; this.conns = [conn]; });
       conn.on('data', d => {
         if (d.t === 'init') {
+          soloMode = false;
+          WORLD = WORLD_MULTI; // en ligne, tout le monde a la petite map partagée
           edits.clear();
           for (const [k, t] of d.edits) edits.set(k, t);
           generateWorld();
@@ -1954,6 +1977,17 @@ sensSlider.addEventListener('input', () => {
   sensVal.textContent = 'x' + settings.sens.toFixed(1);
   saveSettings();
 });
+document.getElementById('resetMapBtn').onclick = () => {
+  localStorage.removeItem('mmc_world_solo');
+  if (soloMode) {
+    edits.clear();
+    generateWorld();
+  }
+  const btn = document.getElementById('resetMapBtn');
+  btn.textContent = '✅ Map solo réinitialisée !';
+  setTimeout(() => btn.textContent = 'Réinitialiser ma map solo', 2000);
+};
+
 document.getElementById('resetBtn').onclick = () => {
   settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   saveSettings();
@@ -1973,7 +2007,21 @@ function showPlay() {
   document.getElementById('joinRow').style.display = 'none';
 }
 
-document.getElementById('soloBtn').onclick = () => { showPlay(); playBtn.click(); };
+document.getElementById('soloBtn').onclick = () => {
+  // Solo : grande map + constructions rechargées depuis le navigateur
+  soloMode = true;
+  WORLD = WORLD_SOLO;
+  edits.clear();
+  try {
+    const saved = JSON.parse(localStorage.getItem('mmc_world_solo') || '[]');
+    for (const [k, t] of saved) edits.set(k, t);
+  } catch (e) {}
+  generateWorld();
+  player.pos.set(0.5, heightAt(0, 0) + 3, 0.5);
+  player.vel.set(0, 0, 0);
+  showPlay();
+  playBtn.click();
+};
 
 document.getElementById('hostBtn').onclick = () => {
   menuMsg.textContent = 'Création de la partie...';
@@ -2019,10 +2067,6 @@ function enterWorld() {
 
 document.getElementById('hideSeekBtn').onclick = () => {
   hostLaunchHideSeek('classic');
-  if (game.mode === 'hide') enterWorld();
-};
-document.getElementById('chatBtn').onclick = () => {
-  hostLaunchHideSeek('convert');
   if (game.mode === 'hide') enterWorld();
 };
 
