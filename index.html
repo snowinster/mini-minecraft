@@ -255,7 +255,7 @@
   <button class="tbtn" id="tMenu" style="right:16px;top:16px">☰</button>
 </div>
 <div id="blind"><h2>Les joueurs se cachent...</h2><div class="count">60</div><p>Tu es le CHASSEUR. Prépare-toi !</p></div>
-<div id="deadOverlay"><div>💀 Tu as été éliminé !</div></div>
+<div id="deadOverlay"><div>💀 Éliminé ! Tu voles en spectateur (Espace = monter, Maj = descendre)</div></div>
 
 <div id="overlay">
   <div id="menuCard">
@@ -264,6 +264,7 @@
 
     <div id="menuHome" class="view">
       <div id="resultBox"></div>
+      <button class="btn red" id="replayBtn" style="display:none">🔁 REJOUER (nouveau chasseur)</button>
       <input id="nameInput" class="input" maxlength="12" placeholder="TON PSEUDO">
       <button class="btn" id="soloBtn">🌍 JOUER EN SOLO</button>
       <button class="btn alt" id="hostBtn">🎮 CRÉER UNE PARTIE EN LIGNE</button>
@@ -272,7 +273,7 @@
         <input id="codeInput" class="input" maxlength="4" placeholder="CODE">
         <button class="btn gray" id="joinGo">GO</button>
       </div>
-      <div id="roomInfo">Code de la partie : <span id="roomCode"></span><br><span style="opacity:.7">Donne ce code a ton pote.</span></div>
+      <div id="roomInfo">Code de la partie : <span id="roomCode"></span><br><span style="opacity:.7">Donne ce code a ton pote, ou envoie-lui le lien :</span><button class="btn alt" id="copyLinkBtn" style="margin:8px 0 0">📋 COPIER LE LIEN D'INVITATION</button></div>
       <button class="btn" id="playBtn" style="display:none">▶ ENTRER DANS LE MONDE</button>
       <button class="btn red" id="practiceBtn" style="display:none">🎯 ENTRAÎNEMENT CACHETTE</button>
       <button class="btn red" id="hideSeekBtn" style="display:none">🔫 LANCER LE CACHE-CACHE</button>
@@ -1048,6 +1049,15 @@ const game = {
 let spectating = false;
 let hunterPtsBuffer = 0;
 
+// ---------- Scores cumulés de la soirée ----------
+const session = new Map(); // id -> stats cumulées
+let sessionRoundHiders = new Set();
+let lastLaunch = 'classic'; // pour le bouton REJOUER
+function sessionStat(id) {
+  if (!session.has(id)) session.set(id, { rounds: 0, wins: 0, kills: 0, pts: 0, survived: 0 });
+  return session.get(id);
+}
+
 const banner = document.getElementById('banner');
 const bigAlert = document.getElementById('bigAlert');
 const notif = document.getElementById('notif');
@@ -1315,6 +1325,8 @@ function startHideSeek(hunterId, hiders, mode) {
   decoyUsed = false;
   clearDecoys();
   game.phaseEnd = Date.now() + HIDE_SECS * 1000;
+  sessionRoundHiders = new Set(hiders);
+  document.getElementById('replayBtn').style.display = 'none';
   deadOverlay.style.display = 'none';
   resultBox.style.display = 'none';
   setSpectating(false);
@@ -1385,6 +1397,17 @@ function endHideSeek(who, scores) {
   let guard = 0;
   while (collide(player.pos) && guard++ < 30) player.pos.y += 0.5;
 
+  // Statistiques cumulées de la soirée (hors mode entraînement)
+  if (game.hunterId && game.hunterId !== 'bot-practice') {
+    for (const id of new Set([game.hunterId, ...sessionRoundHiders])) sessionStat(id).rounds++;
+    for (const [id, pts] of Object.entries(scores || {})) sessionStat(id).pts += pts;
+    const caught = [...sessionRoundHiders].filter(id => !game.alive.has(id)).length;
+    sessionStat(game.hunterId).kills += caught;
+    for (const id of game.alive) if (sessionRoundHiders.has(id)) sessionStat(id).survived++;
+    const winners = who === 'hunter' ? [game.hunterId] : [...game.alive];
+    for (const id of winners) sessionStat(id).wins++;
+  }
+
   const hunterWinTxt = game.convertMode ? '🧊 TOUT LE MONDE A ÉTÉ ATTRAPÉ !' : '🔫 LE CHASSEUR A GAGNÉ !';
   let html = `<div class="win">${who === 'hunter' ? hunterWinTxt : '🌿 LES CACHÉS ONT GAGNÉ !'}</div>`;
   const entries = Object.entries(scores || {});
@@ -1394,8 +1417,18 @@ function endHideSeek(who, scores) {
       html += `${nameOf(id)} : ${pts} pts<br>`;
     }
   }
+  if (session.size) {
+    const rows = [...session.entries()].sort((a, b) => (b[1].wins - a[1].wins) || (b[1].pts - a[1].pts));
+    html += '<div style="margin-top:10px;color:#ffd94a">🏆 CLASSEMENT DE LA SOIRÉE</div>';
+    for (const [id, s] of rows) {
+      html += `${nameOf(id)} : 🏆${s.wins} &nbsp;💀${s.kills} &nbsp;⭐${s.pts} &nbsp;🌿${s.survived}<br>`;
+    }
+    html += '<span style="opacity:.6;font-size:11px">🏆 manches gagnées · 💀 éliminations · ⭐ discrétion · 🌿 survies</span>';
+  }
   resultBox.innerHTML = html;
   resultBox.style.display = 'block';
+  const canReplay = lastLaunch === 'practice' || (net.isHost && net.conns.some(c => c.open));
+  document.getElementById('replayBtn').style.display = canReplay ? 'block' : 'none';
   document.exitPointerLock();
 }
 
@@ -1436,6 +1469,7 @@ function hostLaunchHideSeek(mode) {
   const ids = new Set(net.conns.filter(c => c.open).map(c => c.peer));
   const players = [myId(), ...ids];
   if (players.length < 2) { menuMsg.textContent = 'Il faut au moins 2 joueurs connectés !'; return; }
+  lastLaunch = mode;
   const hunter = players[Math.floor(Math.random() * players.length)];
   const hiders = players.filter(p => p !== hunter);
 
@@ -1465,6 +1499,7 @@ function hostHandleLeave(id) {
 // camouflages tranquillement.
 function startPractice() {
   net.isHost = true; // on est son propre "hôte" pour piloter les phases
+  lastLaunch = 'practice';
   playerNames.set('bot-practice', 'Bot (entraînement)');
   startHideSeek('bot-practice', [myId()], 'classic');
   clearGameTimers();
@@ -1508,6 +1543,7 @@ function onDead(id) {
   if (id === myId()) {
     game.dead = true;
     deadOverlay.style.display = 'flex';
+    setTimeout(() => { if (game.dead) deadOverlay.style.display = 'none'; }, 4500);
     sfx.dead();
   } else if (game.mode === 'hide') {
     showNotif('💀 ' + nameOf(id) + ' a été éliminé !', 2000);
@@ -1563,7 +1599,7 @@ function updateGameUI() {
     const title = game.convertMode ? '🧊 CHAT GLACÉ' : '🔫 CHASSE EN COURS';
     let sub;
     if (isHunter()) sub = game.convertMode ? 'Touche les cachés pour les convertir !' : 'Trouve et tire sur les joueurs cachés !';
-    else if (game.dead) sub = 'Éliminé - V pour voir le chasseur';
+    else if (game.dead) sub = 'Spectateur volant 👻 | V = POV chasseur';
     else sub = 'Points : ' + (me || 0) + (game.convertMode ? '' : ' | ❤️ x' + game.myLives) + ' | V = POV chasseur | F = leurre';
     banner.innerHTML = `${title} <b>${mm}:${ss}</b><div class="sub">${sub}</div>`;
   }
@@ -1976,6 +2012,47 @@ document.getElementById('practiceBtn').onclick = () => {
   startPractice();
   enterWorld();
 };
+
+// Rejouer en un clic : relance le même mode avec un nouveau chasseur au sort
+document.getElementById('replayBtn').onclick = () => {
+  if (lastLaunch === 'practice') {
+    startPractice();
+    enterWorld();
+  } else {
+    hostLaunchHideSeek(lastLaunch);
+    if (game.mode === 'hide') enterWorld();
+  }
+};
+
+// Lien d'invitation : ?code=XXXX dans l'URL fait rejoindre automatiquement
+document.getElementById('copyLinkBtn').onclick = () => {
+  const code = document.getElementById('roomCode').textContent;
+  const url = location.origin + location.pathname + '?code=' + code;
+  const btn = document.getElementById('copyLinkBtn');
+  const done = () => {
+    btn.textContent = '✅ LIEN COPIÉ !';
+    setTimeout(() => btn.textContent = '📋 COPIER LE LIEN D\'INVITATION', 2000);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(done, () => prompt('Copie ce lien :', url));
+  } else {
+    prompt('Copie ce lien :', url);
+  }
+};
+
+const urlCode = (new URLSearchParams(location.search).get('code') || '').toUpperCase();
+if (/^[A-Z2-9]{4}$/.test(urlCode)) {
+  menuMsg.textContent = 'Connexion a la partie ' + urlCode + '...';
+  document.getElementById('codeInput').value = urlCode;
+  net.join(urlCode, () => {
+    menuMsg.textContent = '';
+    showPlay();
+    updateNetStatus();
+  }, () => {
+    menuMsg.textContent = 'Partie ' + urlCode + ' introuvable. L\'hôte doit garder sa page ouverte.';
+    document.getElementById('joinRow').style.display = 'flex';
+  });
+}
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === renderer.domElement;
   overlay.style.display = locked ? 'none' : 'flex';
@@ -2401,6 +2478,33 @@ function stepPhysics(dt, canControl) {
   prevPos.copy(p);
 }
 
+// Spectateur libre : une fois éliminé, on vole librement dans la map
+// (ZQSD pour se déplacer, Espace pour monter, Maj pour descendre).
+function flyStep(dt) {
+  if (!locked) return;
+  const B = settings.binds;
+  const fwd = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+  const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+  const move = new THREE.Vector3();
+  if (keys[B.forward] || keys['ArrowUp']) move.add(fwd);
+  if (keys[B.back] || keys['ArrowDown']) move.sub(fwd);
+  if (keys[B.right] || keys['ArrowRight']) move.add(right);
+  if (keys[B.left] || keys['ArrowLeft']) move.sub(right);
+  if (touchMove.x || touchMove.y) {
+    move.add(fwd.clone().multiplyScalar(-touchMove.y));
+    move.add(right.clone().multiplyScalar(touchMove.x));
+  }
+  if (keys[B.jump] || touchJumpQueued) move.y += 1;
+  if (keys[B.sprint] || (B.sprint.startsWith('Shift') && (keys['ShiftLeft'] || keys['ShiftRight']))) move.y -= 1;
+  touchJumpQueued = false;
+  if (move.lengthSq() > 0) {
+    move.normalize().multiplyScalar(12 * dt);
+    player.pos.add(move);
+    player.pos.y = Math.max(1, Math.min(60, player.pos.y));
+  }
+  player.vel.set(0, 0, 0);
+}
+
 // Onglet en arrière-plan : requestAnimationFrame est en pause, ce timer
 // continue la gravité pour que le joueur tombe quand même.
 let lastBgStep = performance.now();
@@ -2408,7 +2512,7 @@ setInterval(() => {
   const bgNow = performance.now();
   const dt = Math.min((bgNow - lastBgStep) / 1000, 0.2);
   lastBgStep = bgNow;
-  if (document.hidden) stepPhysics(dt, false);
+  if (document.hidden && !game.dead) stepPhysics(dt, false);
 }, 150);
 
 function loop(now) {
@@ -2424,7 +2528,8 @@ function loop(now) {
 
   const frozen = (isHunter() && game.phase === 'hiding') || game.dead || spectating;
 
-  stepPhysics(dt, locked && !frozen);
+  if (game.dead && !spectating) flyStep(dt); // éliminé = spectateur volant
+  else stepPhysics(dt, locked && !frozen);
   lastBgStep = now;
 
   const hunterRemote = spectating ? remotePlayers.get(game.hunterId) : null;
@@ -2476,6 +2581,8 @@ function loop(now) {
   for (const [rid, r] of remotePlayers) {
     const g = r.group;
     g.scale.setScalar(game.mode === 'hide' && !game.hunters.has(rid) ? HIDER_SCALE : 1);
+    // Les éliminés volent en spectateurs : on masque leur perso
+    g.visible = !(game.mode === 'hide' && !game.hunters.has(rid) && !game.alive.has(rid));
     // Pseudos masqués pendant le cache-cache (sinon ils trahissent les cachés)
     const tag = g.getObjectByName('nametag');
     if (tag) tag.visible = game.mode !== 'hide';
@@ -2495,7 +2602,7 @@ function loop(now) {
   }
 
   // Modèle de son propre perso, visible seulement en 3e personne
-  const showSelf = thirdPerson && locked && !spectating;
+  const showSelf = thirdPerson && locked && !spectating && !game.dead;
   selfMesh.visible = showSelf;
   if (showSelf) {
     selfMesh.scale.setScalar(myScale());
