@@ -4,8 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Mini Minecraft - Cache-cache</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
 <style>
-  html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; background: #000; font-family: 'Courier New', monospace; }
+  html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; background: #000; font-family: 'Silkscreen', 'Courier New', monospace; }
   #crosshair {
     position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
     color: white; font-size: 22px; pointer-events: none; text-shadow: 0 0 3px #000; z-index: 10;
@@ -102,35 +105,37 @@
   }
   #menuCard::-webkit-scrollbar { width: 8px; }
   #menuCard::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 4px; }
-  /* Logo façon écran titre Minecraft : gris clair, contour noir, relief */
-  #logoWrap { position: relative; margin-bottom: 22px; }
+  /* Logo façon écran titre Minecraft : police pixel, contour noir, relief */
+  #logoWrap { position: relative; margin-bottom: 26px; }
   .logo {
-    font-size: 44px; margin: 0; letter-spacing: 2px; color: #dcdcdc; font-weight: bold;
-    -webkit-text-stroke: 2px #1a1a1a;
-    text-shadow: 0 4px 0 #3c3c3c, 0 6px 0 #1a1a1a, 0 10px 14px rgba(0,0,0,.7);
+    font-family: 'Press Start 2P', 'Silkscreen', monospace;
+    font-size: 27px; margin: 0; color: #d7d7d7; line-height: 1.25;
+    -webkit-text-stroke: 2px #000;
+    text-shadow: 0 5px 0 #2b2b2b, 0 7px 0 #000, 0 11px 12px rgba(0,0,0,.65);
   }
   .edition {
-    font-size: 15px; font-weight: bold; letter-spacing: 9px; color: #ececec; margin-top: 4px;
-    text-transform: uppercase; text-shadow: 2px 2px 0 #1a1a1a;
+    font-family: 'Press Start 2P', 'Silkscreen', monospace;
+    font-size: 11px; letter-spacing: 6px; color: #ececec; margin-top: 10px;
+    text-transform: uppercase; text-shadow: 2px 2px 0 #000;
   }
   #splash {
-    position: absolute; right: -24px; bottom: -8px; color: #ffff55; font-size: 14px; font-weight: bold;
+    position: absolute; right: -20px; bottom: -12px; color: #ffff55; font-size: 15px; font-weight: bold;
     transform: rotate(-12deg); text-shadow: 2px 2px 0 rgba(60,60,0,.9); pointer-events: none;
     animation: splashPulse .9s infinite; white-space: nowrap;
   }
   @keyframes splashPulse { 50% { transform: rotate(-12deg) scale(1.08); } }
-  /* Boutons façon Minecraft : pierre grise, bord noir, relief */
+  /* Boutons façon Minecraft : gris pierre plat, bord noir, relief clair/foncé */
   .btn {
-    display: block; width: 100%; box-sizing: border-box; margin: 9px 0; padding: 12px 18px;
-    font-size: 15px; font-family: inherit; font-weight: bold; letter-spacing: 1px;
-    color: #fff; text-shadow: 2px 2px 0 rgba(0,0,0,.55);
-    background: linear-gradient(180deg, #9e9e9e, #757575 45%, #616161);
-    border: 2px solid #000; border-radius: 2px; cursor: pointer;
-    box-shadow: inset 0 2px 0 rgba(255,255,255,.4), inset 0 -4px 0 rgba(0,0,0,.35), 0 3px 6px rgba(0,0,0,.45);
+    display: block; width: 100%; box-sizing: border-box; margin: 9px 0; padding: 13px 18px;
+    font-size: 15px; font-family: inherit; font-weight: bold; letter-spacing: 0;
+    color: #fff; text-shadow: 2px 2px 0 #3f3f3f;
+    background: linear-gradient(180deg, #848484, #6e6e6e 40%, #5c5c5c);
+    border: 2px solid #000; border-radius: 0; cursor: pointer;
+    box-shadow: inset 2px 2px 0 rgba(255,255,255,.35), inset -2px -3px 0 rgba(0,0,0,.45);
     transition: filter .08s;
   }
   .btn:hover { filter: brightness(1.18); border-color: #fff; }
-  .btn:active { filter: brightness(.92); box-shadow: inset 0 2px 5px rgba(0,0,0,.4); }
+  .btn:active { filter: brightness(.92); box-shadow: inset 2px 2px 4px rgba(0,0,0,.4); }
   #menuFooterL, #menuFooterR {
     position: fixed; bottom: 8px; color: #fff; font-size: 13px;
     text-shadow: 2px 2px 0 rgba(0,0,0,.7); pointer-events: none;
@@ -275,23 +280,23 @@
 
     <div id="menuHome" class="view">
       <div id="resultBox"></div>
-      <button class="btn red" id="replayBtn" style="display:none">🔁 REJOUER (nouveau chasseur)</button>
+      <button class="btn red" id="replayBtn" style="display:none">Rejouer (nouveau chasseur)</button>
       <input id="nameInput" class="input" maxlength="12" placeholder="TON PSEUDO">
-      <button class="btn" id="soloBtn">🌍 JOUER EN SOLO</button>
-      <button class="btn alt" id="hostBtn">🎮 CRÉER UNE PARTIE EN LIGNE</button>
-      <button class="btn alt" id="joinBtn">🔑 REJOINDRE UNE PARTIE</button>
+      <button class="btn" id="soloBtn">Jouer en solo</button>
+      <button class="btn alt" id="hostBtn">Créer une partie en ligne</button>
+      <button class="btn alt" id="joinBtn">Rejoindre une partie</button>
       <div id="joinRow">
         <input id="codeInput" class="input" maxlength="4" placeholder="CODE">
         <button class="btn gray" id="joinGo">GO</button>
       </div>
-      <div id="roomInfo">Code de la partie : <span id="roomCode"></span><br><span style="opacity:.7">Donne ce code a ton pote, ou envoie-lui le lien :</span><button class="btn alt" id="copyLinkBtn" style="margin:8px 0 0">📋 COPIER LE LIEN D'INVITATION</button></div>
-      <button class="btn" id="playBtn" style="display:none">▶ ENTRER DANS LE MONDE</button>
-      <button class="btn red" id="practiceBtn" style="display:none">🎯 ENTRAÎNEMENT CACHETTE</button>
-      <button class="btn red" id="hideSeekBtn" style="display:none">🔫 LANCER LE CACHE-CACHE</button>
-      <button class="btn ice" id="chatBtn" style="display:none">🧊 LANCER LE CHAT GLACÉ</button>
+      <div id="roomInfo">Code de la partie : <span id="roomCode"></span><br><span style="opacity:.7">Donne ce code a ton pote, ou envoie-lui le lien :</span><button class="btn alt" id="copyLinkBtn" style="margin:8px 0 0">Copier le lien d'invitation</button></div>
+      <button class="btn" id="playBtn" style="display:none">Entrer dans le monde</button>
+      <button class="btn red" id="practiceBtn" style="display:none">Entraînement cachette</button>
+      <button class="btn red" id="hideSeekBtn" style="display:none">Lancer le cache-cache</button>
+      <button class="btn ice" id="chatBtn" style="display:none">Lancer le chat glacé 🧊</button>
       <div class="btnRow">
-        <button class="btn gray" id="rulesBtn">❓ COMMENT JOUER</button>
-        <button class="btn gray" id="settingsBtn">⚙️ RÉGLAGES</button>
+        <button class="btn gray" id="rulesBtn">Comment jouer</button>
+        <button class="btn gray" id="settingsBtn">Options...</button>
       </div>
       <div id="menuMsg"></div>
     </div>
@@ -2043,8 +2048,8 @@ document.getElementById('copyLinkBtn').onclick = () => {
   const url = location.origin + location.pathname + '?code=' + code;
   const btn = document.getElementById('copyLinkBtn');
   const done = () => {
-    btn.textContent = '✅ LIEN COPIÉ !';
-    setTimeout(() => btn.textContent = '📋 COPIER LE LIEN D\'INVITATION', 2000);
+    btn.textContent = '✅ Lien copié !';
+    setTimeout(() => btn.textContent = 'Copier le lien d\'invitation', 2000);
   };
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(url).then(done, () => prompt('Copie ce lien :', url));
