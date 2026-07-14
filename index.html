@@ -362,6 +362,7 @@ const TYPES = {
   roofblue: { name: 'Toit B', top: 0x3f74d8, side: 0x3060b8 },
   glass:    { name: 'Vitre',  top: 0xa8dcf0, side: 0x9fd4ea },
   dark:     { name: 'Ardoise',top: 0x424956, side: 0x3a404c },
+  pink:     { name: 'Rose',   top: 0xf097c0, side: 0xe888b5 },
 };
 // Les blocs "décor" (murs, toits, vitres) servent aux bâtiments générés
 // et ne sont pas dans la barre d'inventaire.
@@ -650,6 +651,7 @@ const BLOCK_KINDS = {
   roofblue: { top: 'plain', side: 'plain' },
   glass:    { top: 'glass', side: 'glass' },
   dark:     { top: 'plain', side: 'plain' },
+  pink:     { top: 'plain', side: 'plain' },
 };
 
 const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -953,6 +955,47 @@ function buildPokeCenter(x0, z0) {
   }
 }
 
+// Centre Pokémon reproduit bloc a bloc depuis le fichier .schem fourni
+// (pokecenter-e700.schem, 41x30x43), converti vers la palette du jeu et
+// compressé en RLE. Ordre des cellules : y, puis z, puis x.
+const POKE_SCHEM = {
+  w: 41, h: 30, l: 43,
+  types: ['grass', 'leaf', 'white', 'roofred', 'pink', 'dark', 'stone', 'wood', 'glass'],
+  rle: '42g39a2g39a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g2a35g2a2g39a2g39a42g42c2.b.b.b3.b3.b.b.b.b.b.b3.b3.b.b.b2.2c8.b5.b11.b5.b5.b2c.b35c.b2c2.c33.c2.2cb.c33.c2.2c2.c33.c2.2cb.c3.23d.2d4.c.b2c2.c3.d21.d.2d4.c2.2c2bc3.d21.d.2d4.cb.2c2.c3.d21.d.2d4.c2.2c2.c3.d21.d.2d4.c2.2c2.c3.d21.d.2d4.c2.2cb.c3.d21.d.2d4.c.b2c2.c3.d21.d7.c2.2c.bc3.d21.d7.cb.2c2.c3.d21.dh6.c2.2cb.c3.d21.dh6.c.b2c2.c3.d21.dh6.c2.2cb.c3.d21.dh6.c.b2c2.c3.d21.dh6.c2.2cb.c3.d21.dh6.c.b2c2.c3.d21.dh6.c2.2cb.c3.d21.d7.c2.2c2.c3.d21.d7.c2.2cb.c3.d21.d.2d4.c.b2c2.c3.d21.d.2d4.c2.2c2bc3.d21.d.2d4.cb.2c2.c3.d21.d.2d4.c2.2c2.c3.d21.d.2d4.c2.2c2.c3.d21.d.2d4.c2.2cb.c3.23d.2d4.c.b2c2.c33.c2.2c2.c33.cb.2c2.c33.c2.2cb.c33.c.b2c2.c33.c2.2c2.c33.c.b2c.bc33.c2.2cb.35cb.2c8.b5.b11.b5.b5.b2c2.b.b.b3.b3.b.b.b.b.b.b3.b3.b.b.b2.42c294.df19hfd.2d15.d21.d.2b15.d21.d.2d15.d21.d.2b15.d21.d.2d15.d21.d.2b15.d21.d.2d15.d21.d18.c21.c18.d21.d18.d21.h18.d21.h18.d21.h18.d21.h18.d21.h18.d21.d18.c21.c18.d21.d18.d21.d.2d15.d21.d.2b15.d21.d.2d15.d21.d.2b15.d21.d.2d15.d21.d.2b15.df19hfd.2d753.df19hfd18.d21.d.2b15.d21.d18.d21.d.2b15.d21.d18.d21.d.2b15.d21.d18.d21.d18.c21.c18.d21.d18.d21.h18.d21.h18.d21.h18.d21.h18.d21.h18.d21.d18.c21.c18.d21.d18.d21.d18.d21.d.2b15.d21.d18.d21.d.2b15.d21.d18.d21.d.2b15.df19hfd756.df19hfd18.c2.2h13.2h2.c18.cd19.dc18.cd19.dc18.cd19.dc18.cd19.dc18.c21.c18.d21.d18.c21.c18.d21.d18.2d19.2d18.2d19.2d18.2d19.2d18.2d19.2d18.2d19.2d18.d21.d18.c21.c18.d21.d18.c21.c18.cd19.dc18.cd19.dc18.cd19.dc18.cd19.dc18.c2.2h13.2h2.c18.df19hfd756.df16h2.hfd18.cdhi2h11.h2ihdc19.i19.i20.i19.i20.i19.i20.i19.i19.cd19.dc18.d21.db17.c21.c18.2d19.2d19.i19.i20.i19.i19.2d19.2d19.i19.i20.i19.i19.2d19.2d18.c21.c18.d21.db17.cd19.dc19.i19.i20.i19.i20.i19.i20.i19.i19.cdh2ih11.h2ihdc18.df16h2.hfd756.df16h2.hfd18.cdh2ih11.h2ihdc19.i19.i20.i19.i20.i19.i20.i19.i19.cd19.dc18.d21.d18.c21.c18.2d19.2d19.i19.i20.i19.i19.2d19.2d19.i19.i20.i19.i19.2d19.2d18.c21.c18.d21.d18.cd19.dc19.i19.i20.i19.i20.i19.i20.i19.i19.cdh2ih11.h2ihdc18.df16h2.hfd756.df16h2.hfd18.cdh2ih11.h2ihdc19.i19.i20.i19.i20.i19.i20.i19.i19.cd19.dc18.d21.d18.c21.c18.2d19.2d19.i19.i20.i19.i19.2d19.2d19.i19.i20.i19.i19.2d19.2d18.c21.c18.d21.d18.cd19.dc19.i19.i20.i19.i20.i19.i20.i19.i19.cdh2ih11.h2ihdc18.df16h2.hfd44.f711.df16h2.hfd18.cdh2ih11.h2ihdc19.i19.i20.i19.i20.i19.i20.i19.i19.cd19.dc18.d21.d18.c21.c18.c21.c18.2d19.2d19.i19.i19.2d19.2d19.i19.i19.2d19.2d18.c21.c18.c21.c18.d21.d18.cd19.dc19.i19.i20.i19.i20.i19.i20.i19.i19.cd4h11.h2ihdc18.df16h2.hfd3.f40.f711.df19hfd18.c2.2h13.2h2.c18.cd19.dc18.cd19.dc18.cd19.dc18.cd19.dc18.c21.c18.d21.d18.c21.c18.c21.c18.c21.c18.2d19.2d18.2d19.2d18.2d19.2d18.c21.c18.c21.c18.c21.c18.d21.d18.c21.c18.cd19.dc18.cd19.dc18.cd19.dc18.cd19.dc18.c2.2h13.2h2.c3.f14.df19hfd3.f40.f711.23d18.d21.d18.d21.d18.d21.d18.d21.d18.d21.d18.d21.d18.d21.d2.f15.c21.c18.c21.c18.c21.c18.c21.c18.c21.c18.c21.c18.c21.c18.c21.c18.c21.c18.d21.d2.f15.d21.d18.d21.d18.d21.d18.d21.d18.d21.d18.d21.d3.f14.23d3.f40.f669.25h16.h23dh16.hd21.dh16.hd21.dh16.hd21.dh16.hd21.dh16.hd21.dh16.hd21.dh16.hd21.df.c14.hd21.dh16.hd21.dh16.hd21.dh16.hd21.dh16.hd21.dh16.hd21.dh16.hd21.dh16.hd21.dh16.hd21.dh16.hd21.df.c14.hd21.dh16.hd21.dh16.hd21.dh16.hd21.dh16.hd21.dh16.hd21.dh2.f13.h23dh2.f13.25h2.f669.24dc16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c2f14.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c22.2c16.c23.c2f14.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c23.cg15.24dc672.24dc16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c.f14.c23.c16.c23.c16.c23.c.e14.c23.c.e14.c23.c.e14.c23.c.e14.c23.c.e14.c23.c16.c23.c16.c23.c.f14.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c16.c23.c3g13.24dc631.25h15.h25dh14.hd23.dh14.hd23.dh14.hd23.dh14.hd23.dh14.hd23.dh14.hd23.dh14.hd23.dh14.hd23.dh14.hd23.dh14.hd23.dhe13.hd23.dhc13.hd23.dhc13.hd23.dhc13.hd23.dhc13.hd23.dhc13.hd23.dhe13.hd23.dh14.hd23.dh14.hd23.dh14.hd23.dh14.hd23.dh14.hd23.dh14.hd23.dh14.hd23.dh14.hd23.dh14.h25dh15.25h590.25g15.2g23f2g14.gf23.fg14.gf23.fg14.gf23.fg14.gf23.fg14.gf23.fg14.gf23.fg14.gf23.fg14.gf23.fg14.gf23.fge13.gf23.fgc13.gf23.fgc13.gf23.fge13.gf23.fge13.gf23.fge13.gf23.fgc13.gf23.fgc13.gf23.fge13.gf23.fg14.gf23.fg14.gf23.fg14.gf23.fg14.gf23.fg14.gf23.fg14.gf23.fg14.gf23.fg14.2g23f2g15.25g590.25e15.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.2e13.2e24.ec13.2e24.2e13.2e24.ce13.2e24.c14.2e24.ce13.2e24.2e13.2e24.ec13.2e24.2e13.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e15.25e590.25e15.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.2e13.2e24.2e13.2e24.2e13.2e24.c14.2e24.c14.2e24.c14.2e24.2e13.2e24.2e13.2e24.2e13.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e14.2e24.e15.25e590.25e15.27e14.27e14.27e14.27e14.27e14.27e14.27e14.27e14.27e14.28e13.27ec13.28e13.26ece13.26ec14.26ece13.28e13.27ec13.28e13.27e14.27e14.27e14.27e14.27e14.27e14.27e14.27e14.27e15.25e590.25f15.f25.f14.f25.f14.f25.f14.f3.f17ef3.f14.f3.e17.e3.f14.f3.e17.e3.f14.f3.e17.e3.f14.f3.e17.e3.f14.f3.e17.e3.f14.f3.e17.e3.fe13.f3.e17.e3.fc13.f3.e17.e3.fc13.f3.e17.e3.fe13.f3.e17.e3.fe13.f3.e17.e3.fe13.f3.e17.e3.fc13.f3.e17.e3.fc13.f3.e17.e3.fe13.f3.e17.e3.f14.f3.e17.e3.f14.f2.3d16.e3.f14.f2.3d16.e3.f14.f2.3d16.e3.f14.f2.3d16ef3.f14.f2.3d20.f14.f25.f14.f25.f15.25f757.f17ef22.e16.fe22.e17.e22.e17.e22.e17.e22.e17.e22.e17.e22.e17.e4.e17.e17.e4.c17.e17.e4.c17.e17.e4.c17.e17.e4.c17.e17.e4.c17.e17.e4.e17.e17.e22.e17.e22.e16.2e21.3d15.2e21.3d15.2e21.3d15.fe21.3d16ef21.3d942.f15ef24.e15.e24.e15.e24.e15.e24.e15.e24.e15.e24.e15.e24.e15.e5.e18.e15.e5.e18.e15.e5.e18.e15.e5.e18.e15.e5.e18.e15.e24.e15.e24.e15.e24.e15.e22.3d15.e22.3d15.e22.3d15ef22.3d38.3d942.f15ef24.17e24.17e24.17e24.17e24.17e24.17e24.17e24.17e24.17e24.17e24.17e24.17e24.17e24.17e24.17e22.3d16e22.3d16e22.3d15ef22.3d38.3d942.17f24.f15.f24.f15.f24.f15.f24.f15.f24.f15.f24.f15.f24.f15.f24.f15.f24.f15.f24.f15.f24.f15.f24.f15.f24.f15.f24.f15.f24.f15.f22.3d15.f22.3d15.f22.3d16f22.3d38.3d1596.3d38.3d38.3d38.3d38.3d1596.3d38.3d38.3d38.3d38.3d1596.3g38.3g38.3g38.3g38.3g1596.h.h38.hgh38.h.h38.hgh38.h.h1638.g81.g1680.h81.h564.',
+};
+
+function decodeSchem(s) {
+  const out = [];
+  let num = '';
+  for (const ch of s.rle) {
+    if (ch >= '0' && ch <= '9') { num += ch; continue; }
+    const n = num ? parseInt(num, 10) : 1;
+    num = '';
+    for (let i = 0; i < n; i++) out.push(ch);
+  }
+  return out; // '.' = air
+}
+
+let pokeSchemCells = null;
+function buildSchematic(x0, z0, s) {
+  if (!pokeSchemCells) pokeSchemCells = decodeSchem(s);
+  const hc = heightAt(x0 + (s.w >> 1), z0 + (s.l >> 1));
+  // dégage tout le volume
+  for (let dx = -1; dx <= s.w; dx++)
+    for (let dz = -1; dz <= s.l; dz++)
+      for (let y = hc + 1; y <= hc + s.h + 2; y++)
+        world.delete(key(x0 + dx, y, z0 + dz));
+  // pose chaque bloc du schéma
+  let i = 0;
+  for (let y = 0; y < s.h; y++)
+    for (let z = 0; z < s.l; z++)
+      for (let x = 0; x < s.w; x++, i++) {
+        const ch = pokeSchemCells[i];
+        if (ch === '.') continue;
+        world.set(key(x0 + x, hc + y, z0 + z), s.types[ch.charCodeAt(0) - 97]);
+      }
+}
+
 function generateWorld() {
   world.clear();
   const half = WORLD / 2;
@@ -1003,10 +1046,11 @@ function generateWorld() {
     for (let z = -half + 4; z < half - 8; z++)
       if (ihash(x, z, 20) > 0.995) buildHouse(x, z);
 
-  // Village Pokémon, uniquement sur la grande map solo
+  // Village Pokémon, uniquement sur la grande map solo : le Centre est
+  // reproduit bloc a bloc depuis le fichier .schem fourni par Julien
   if (soloMode) {
-    buildPokeCenter(-9, 8);                       // Centre Pokémon face au spawn
-    buildPokeBuilding(-26, 8, 7, 6, 'roofblue');  // Boutique Pokémon
+    buildSchematic(-20, 4, POKE_SCHEM);           // Centre Pokémon (le vrai !)
+    buildPokeBuilding(-30, 6, 7, 6, 'roofblue');  // Boutique Pokémon
   }
 
   for (const [k, t] of edits) {
