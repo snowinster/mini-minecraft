@@ -574,7 +574,15 @@ const edits = new Map();
 const key = (x, y, z) => `${x},${y},${z}`;
 
 // ---------- Textures procédurales façon Minecraft (aucun fichier) ----------
-function shadeCss(hex, f) { return '#' + new THREE.Color(hex).multiplyScalar(f).getHexString(); }
+function shadeCss(hex, f) {
+  const c = new THREE.Color(hex).multiplyScalar(f);
+  // clamp : sans ça, éclaircir un bloc déjà clair déborde et produit des
+  // couleurs corrompues (pixels bleus sur les blocs blancs)
+  c.r = Math.min(1, c.r);
+  c.g = Math.min(1, c.g);
+  c.b = Math.min(1, c.b);
+  return '#' + c.getHexString();
+}
 
 function makeBlockTexture(base, kind) {
   const S = 16;
@@ -585,9 +593,12 @@ function makeBlockTexture(base, kind) {
   c.fillStyle = shadeCss(base, 1);
   c.fillRect(0, 0, S, S);
   // grain : pixels aléatoires plus clairs / plus foncés
-  for (let i = 0; i < 70; i++) {
-    c.fillStyle = shadeCss(base, 0.82 + Math.random() * 0.36);
-    c.fillRect(Math.floor(Math.random() * S), Math.floor(Math.random() * S), 1, 1);
+  // (sauf pour les blocs "propres" type quartz/laine et la vitre)
+  if (kind !== 'plain' && kind !== 'glass') {
+    for (let i = 0; i < 70; i++) {
+      c.fillStyle = shadeCss(base, 0.82 + Math.random() * 0.36);
+      c.fillRect(Math.floor(Math.random() * S), Math.floor(Math.random() * S), 1, 1);
+    }
   }
   if (kind === 'grassSide') {
     // bande d'herbe en haut du bloc, bord irrégulier
@@ -634,11 +645,11 @@ const BLOCK_KINDS = {
   stone:    { top: 'stone', side: 'stone' },
   wood:     { top: null, side: 'wood' },
   leaf:     { top: 'leaf', side: 'leaf' },
-  white:    { top: null, side: null },
-  roofred:  { top: null, side: null },
-  roofblue: { top: null, side: null },
+  white:    { top: 'plain', side: 'plain' },
+  roofred:  { top: 'plain', side: 'plain' },
+  roofblue: { top: 'plain', side: 'plain' },
   glass:    { top: 'glass', side: 'glass' },
-  dark:     { top: null, side: null },
+  dark:     { top: 'plain', side: 'plain' },
 };
 
 const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -877,11 +888,14 @@ function buildPokeCenter(x0, z0) {
       const corner = (dx === 0 || dx === w - 1) && (dz === 0 || dz === d - 1);
       for (let y = 1; y <= wallH; y++) {
         let t = 'white';
+        const fromDoor = Math.abs(x0 + dx - doorX);
         if (corner) t = 'dark';
-        else if (y === 1) t = 'dark'; // soubassement sombre
-        else if (dz === 0 && (y === 2 || y === 3) && dx > 1 && dx < w - 2) t = 'glass'; // façade vitrée
-        else if ((y === 2 || y === 3) && dz !== 0 &&
-                 ((dx === 0 || dx === w - 1) ? (dz % 3 !== 1) : (dx % 3 !== 1))) t = 'glass';
+        else if (y === 1 && dz !== 0) t = 'dark'; // soubassement (pas en façade)
+        else if (dz === 0) {
+          // façade : blanche, avec deux baies vitrées autour de l'entrée
+          if (y <= 3 && fromDoor >= 3 && fromDoor <= 4) t = 'glass';
+        } else if ((y === 2 || y === 3) &&
+                   ((dx === 0 || dx === w - 1) ? (dz % 3 !== 1) : (dx % 3 !== 1))) t = 'glass';
         set(x0 + dx, y, z0 + dz, t);
       }
     }
@@ -918,11 +932,10 @@ function buildPokeCenter(x0, z0) {
     }
   }
 
-  // grande arche frontale : panneau blanc arrondi bordé de rouge, avec
-  // l'emblème Pokéball (anneau sombre, centre vitré) au-dessus de l'entrée
+  // arche frontale intégrée au toit : panneau blanc arrondi couronné de
+  // rouge, avec l'emblème Pokéball (anneau sombre, centre vitré)
   const GABLE = [
-    '...RRR...',
-    '.RRWWWRR.',
+    '..RRRRR..',
     '.RWWWWWR.',
     'RWWDDDWWR',
     'RWDWWWDWR',
@@ -935,7 +948,7 @@ function buildPokeCenter(x0, z0) {
       const ch = GABLE[r][c];
       if (ch === '.') continue;
       const t = ch === 'W' ? 'white' : ch === 'D' ? 'dark' : ch === 'G' ? 'glass' : 'roofred';
-      set(doorX - 4 + c, wallH + 6 - r + 3, z0 - 2, t);
+      set(doorX - 4 + c, wallH + 7 - r, z0 - 2, t);
     }
   }
 }
