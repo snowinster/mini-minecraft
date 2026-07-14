@@ -727,7 +727,16 @@ function queueSoloSave() {
   if (soloSaveTimer) return;
   soloSaveTimer = setTimeout(() => { soloSaveTimer = null; saveSoloEdits(); }, 1000);
 }
-addEventListener('beforeunload', () => { if (soloMode) saveSoloEdits(); });
+// La position est sauvegardée aussi : on réapparait là où on s'était arrêté
+function saveSoloPos() {
+  try {
+    localStorage.setItem('mmc_pos_solo', JSON.stringify({
+      x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch,
+    }));
+  } catch (e) {}
+}
+setInterval(() => { if (soloMode) saveSoloPos(); }, 3000);
+addEventListener('beforeunload', () => { if (soloMode) { saveSoloEdits(); saveSoloPos(); } });
 
 // ---------- Génération 100% déterministe ----------
 // Hash en arithmétique ENTIÈRE : résultat identique sur tous les
@@ -1979,9 +1988,12 @@ sensSlider.addEventListener('input', () => {
 });
 document.getElementById('resetMapBtn').onclick = () => {
   localStorage.removeItem('mmc_world_solo');
+  localStorage.removeItem('mmc_pos_solo');
   if (soloMode) {
     edits.clear();
     generateWorld();
+    player.pos.set(0.5, heightAt(0, 0) + 3, 0.5);
+    player.vel.set(0, 0, 0);
   }
   const btn = document.getElementById('resetMapBtn');
   btn.textContent = '✅ Map solo réinitialisée !';
@@ -2017,7 +2029,16 @@ document.getElementById('soloBtn').onclick = () => {
     for (const [k, t] of saved) edits.set(k, t);
   } catch (e) {}
   generateWorld();
-  player.pos.set(0.5, heightAt(0, 0) + 3, 0.5);
+  // Reprend la dernière position sauvegardée, sinon spawn au centre
+  let savedPos = null;
+  try { savedPos = JSON.parse(localStorage.getItem('mmc_pos_solo') || 'null'); } catch (e) {}
+  if (savedPos && [savedPos.x, savedPos.y, savedPos.z].every(Number.isFinite)) {
+    player.pos.set(savedPos.x, Math.min(60, Math.max(1, savedPos.y)), savedPos.z);
+    player.yaw = savedPos.yaw || 0;
+    player.pitch = savedPos.pitch || 0;
+  } else {
+    player.pos.set(0.5, heightAt(0, 0) + 3, 0.5);
+  }
   player.vel.set(0, 0, 0);
   showPlay();
   playBtn.click();
