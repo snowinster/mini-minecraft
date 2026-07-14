@@ -352,13 +352,17 @@ const PROXIMITY_DIST = 20;
 const MAG_SIZE = 5, RELOAD_MS = 2500, LIVES = 2;
 
 const TYPES = {
-  grass: { name: 'Herbe',  top: 0x5aa832, side: 0x7a5230 },
-  dirt:  { name: 'Terre',  top: 0x7a5230, side: 0x7a5230 },
-  stone: { name: 'Pierre', top: 0x8a8a8a, side: 0x8a8a8a },
-  wood:  { name: 'Bois',   top: 0xa8763e, side: 0x8b5a2b },
-  leaf:  { name: 'Feuille',top: 0x3e7d2c, side: 0x3e7d2c },
+  grass:    { name: 'Herbe',  top: 0x5aa832, side: 0x7a5230 },
+  dirt:     { name: 'Terre',  top: 0x7a5230, side: 0x7a5230 },
+  stone:    { name: 'Pierre', top: 0x8a8a8a, side: 0x8a8a8a },
+  wood:     { name: 'Bois',   top: 0xa8763e, side: 0x8b5a2b },
+  leaf:     { name: 'Feuille',top: 0x3e7d2c, side: 0x3e7d2c },
+  white:    { name: 'Mur',    top: 0xf2eee2, side: 0xe8e2d2 },
+  roofred:  { name: 'Toit R', top: 0xd8434a, side: 0xc23038 },
+  roofblue: { name: 'Toit B', top: 0x3f74d8, side: 0x3060b8 },
+  glass:    { name: 'Vitre',  top: 0xa8dcf0, side: 0x9fd4ea },
 };
-const PLACEABLE = ['grass', 'dirt', 'stone', 'wood', 'leaf'];
+const PLACEABLE = ['grass', 'dirt', 'stone', 'wood', 'leaf', 'white', 'roofred', 'roofblue', 'glass'];
 // Couleurs de perso : vives + camouflage (herbe, feuille, terre, pierre, bois, nuit)
 const SKIN_COLORS = [0xe74c3c, 0x3498db, 0xf1c40f, 0x9b59b6, 0x1abc9c, 0xff8fb3,
                      0x5aa832, 0x3e7d2c, 0x7a5230, 0x8a8a8a, 0x8b5a2b, 0x2c3e50];
@@ -609,6 +613,12 @@ function makeBlockTexture(base, kind) {
       c.fillStyle = shadeCss(base, 0.78);
       c.fillRect(Math.floor(Math.random() * (S - 2)), Math.floor(Math.random() * (S - 2)), 2 + Math.floor(Math.random() * 2), 2);
     }
+  } else if (kind === 'glass') {
+    // reflets diagonaux de la vitre
+    c.fillStyle = 'rgba(255,255,255,.75)';
+    c.fillRect(2, 2, 2, 9);
+    c.fillRect(6, 6, 1, 7);
+    c.fillRect(10, 3, 1, 5);
   }
   const tex = new THREE.CanvasTexture(canvas);
   tex.magFilter = THREE.NearestFilter;
@@ -616,11 +626,15 @@ function makeBlockTexture(base, kind) {
 }
 
 const BLOCK_KINDS = {
-  grass: { top: null, side: 'grassSide' },
-  dirt:  { top: null, side: null },
-  stone: { top: 'stone', side: 'stone' },
-  wood:  { top: null, side: 'wood' },
-  leaf:  { top: 'leaf', side: 'leaf' },
+  grass:    { top: null, side: 'grassSide' },
+  dirt:     { top: null, side: null },
+  stone:    { top: 'stone', side: 'stone' },
+  wood:     { top: null, side: 'wood' },
+  leaf:     { top: 'leaf', side: 'leaf' },
+  white:    { top: null, side: null },
+  roofred:  { top: null, side: null },
+  roofblue: { top: null, side: null },
+  glass:    { top: 'glass', side: 'glass' },
 };
 
 const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -788,6 +802,46 @@ function buildHouse(x0, z0) {
   }
 }
 
+// Bâtiment façon Pokémon : murs blancs, fenêtres en vitre, double porte,
+// toit coloré qui déborde (rouge = Centre Pokémon, bleu = Boutique).
+function buildPokeBuilding(x0, z0, w, d, roofType) {
+  const hc = heightAt(x0 + (w >> 1), z0 + (d >> 1));
+  const wallH = 3;
+  // aplanit la zone : sol en pierre, tout ce qui dépasse est retiré
+  for (let dx = -1; dx <= w; dx++) {
+    for (let dz = -1; dz <= d; dz++) {
+      const wx = x0 + dx, wz = z0 + dz;
+      for (let y = hc + 1; y <= hc + 9; y++) world.delete(key(wx, y, wz));
+      world.set(key(wx, hc, wz), 'stone');
+    }
+  }
+  // murs blancs avec fenêtres en vitre
+  for (let dx = 0; dx < w; dx++) {
+    for (let dz = 0; dz < d; dz++) {
+      const isWall = dx === 0 || dx === w - 1 || dz === 0 || dz === d - 1;
+      if (!isWall) continue;
+      for (let y = 1; y <= wallH; y++) {
+        let t = 'white';
+        if (y === 2 && dx > 0 && dx < w - 1 && dx % 2 === 0) t = 'glass';
+        if (y === 2 && dz > 0 && dz < d - 1 && dz % 2 === 0) t = 'glass';
+        world.set(key(x0 + dx, hc + y, z0 + dz), t);
+      }
+    }
+  }
+  // double porte face sud
+  const doorX = x0 + (w >> 1);
+  for (const wx of [doorX - 1, doorX]) {
+    for (let y = 1; y <= 2; y++) world.delete(key(wx, hc + y, z0));
+  }
+  // toit en deux niveaux qui déborde
+  for (let dx = -1; dx <= w; dx++)
+    for (let dz = -1; dz <= d; dz++)
+      world.set(key(x0 + dx, hc + wallH + 1, z0 + dz), roofType);
+  for (let dx = 1; dx < w - 1; dx++)
+    for (let dz = 1; dz < d - 1; dz++)
+      world.set(key(x0 + dx, hc + wallH + 2, z0 + dz), roofType);
+}
+
 function generateWorld() {
   world.clear();
   const half = WORLD / 2;
@@ -837,6 +891,12 @@ function generateWorld() {
   for (let x = -half + 4; x < half - 8; x++)
     for (let z = -half + 4; z < half - 8; z++)
       if (ihash(x, z, 20) > 0.995) buildHouse(x, z);
+
+  // Village Pokémon, uniquement sur la grande map solo
+  if (soloMode) {
+    buildPokeBuilding(6, 5, 9, 7, 'roofred');    // Centre Pokémon
+    buildPokeBuilding(-15, 5, 7, 6, 'roofblue'); // Boutique Pokémon
+  }
 
   for (const [k, t] of edits) {
     if (t === null) world.delete(k);
@@ -1987,6 +2047,7 @@ sensSlider.addEventListener('input', () => {
   saveSettings();
 });
 document.getElementById('resetMapBtn').onclick = () => {
+  if (!confirm('Êtes-vous sûr de vouloir réinitialiser la map solo ?\n\nToutes les constructions et la position sauvegardées seront définitivement supprimées.')) return;
   localStorage.removeItem('mmc_world_solo');
   localStorage.removeItem('mmc_pos_solo');
   if (soloMode) {
