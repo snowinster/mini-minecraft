@@ -70,6 +70,13 @@
     position: fixed; bottom: 165px; right: 13%; color: #fff; font-size: 18px;
     text-shadow: 0 0 4px #000; z-index: 10; display: none;
   }
+  #radar {
+    position: fixed; top: 110px; left: 50%; transform: translateX(-50%);
+    z-index: 11; display: none; text-align: center; color: #ffd94a;
+    text-shadow: 0 0 6px #000; pointer-events: none;
+  }
+  #radarArrow { font-size: 46px; }
+  #radar .lbl { font-size: 12px; background: rgba(0,0,0,.5); padding: 3px 10px; border-radius: 5px; margin-top: 2px; }
   #blind {
     position: fixed; inset: 0; background: #000; z-index: 15; display: none;
     align-items: center; justify-content: center; flex-direction: column; color: #fff; text-align: center;
@@ -230,6 +237,7 @@
 <div id="flash"></div>
 <div id="vignette"></div>
 <div id="ammo"></div>
+<div id="radar"><div id="radarArrow">➤</div><div class="lbl">📡 Caché le plus proche</div></div>
 <div id="paintInfo"><span class="pc" id="paintSwatch"></span><span id="paintHint">Clic G : peindre &nbsp;|&nbsp; Clic D : pipette &nbsp;|&nbsp; Clic molette : tourner &nbsp;|&nbsp; Molette : zoom &nbsp;|&nbsp; P : sortir</span></div>
 <div id="paintCursor"></div>
 <div id="touchUI">
@@ -280,7 +288,7 @@
       <h2>❓ COMMENT JOUER</h2>
       <div class="rules">
         <div class="rItem"><div class="rIcon">🎮</div><div><b>Contrôles</b> : ZQSD / WASD pour bouger, <kbd>MAJ</kbd> sprint, <kbd>ESPACE</kbd> sauter. Clic gauche : casser / tirer. Clic droit : poser un bloc. Toutes les touches sont modifiables dans les Réglages.</div></div>
-        <div class="rItem"><div class="rIcon">🙈</div><div><b>Cache-cache</b> : un chasseur est tiré au sort. Les cachés ont 60 s pour se planquer (<kbd>R</kbd> = prêt en avance), puis 3 min de chasse pendant que la nuit tombe.</div></div>
+        <div class="rItem"><div class="rIcon">🙈</div><div><b>Cache-cache</b> : un chasseur est tiré au sort. Les cachés ont 60 s pour se planquer (<kbd>R</kbd> = prêt en avance), puis 4 min de chasse pendant que la nuit tombe. Toutes les 30 s, le chasseur reçoit un <b>radar</b> : une flèche indique 3 s la direction du caché le plus proche... ou d'un leurre !</div></div>
         <div class="rItem"><div class="rIcon">❤️</div><div><b>Survie</b> : les cachés sont <b>3x plus petits</b>, ont 2 vies mais ne peuvent pas toucher aux blocs — leurs armes : la taille et le camouflage. Le chasseur a 5 balles par chargeur, rechargement 2,5 s.</div></div>
         <div class="rItem"><div class="rIcon">🎭</div><div><b>Leurre</b> : <kbd>F</kbd> pose un faux joueur (1 par partie) pour piéger le chasseur.</div></div>
         <div class="rItem"><div class="rIcon">🎨</div><div><b>Peinture camouflage</b> : <kbd>C</kbd> bascule la vue 1re/3e personne (les cachés démarrent en 3e personne). <kbd>P</kbd> ouvre l'atelier : souris = pinceau, clic droit = pipette au pixel près sur les blocs, clic gauche = peindre, clic molette maintenu = tourner autour du perso, molette = zoom. Fonds-toi dans le décor !</div></div>
@@ -312,7 +320,8 @@ const WORLD = 32; // côté de la map en blocs (petite = parties plus rythmées)
 const GRAVITY = 26, JUMP = 9, SPEED = 6, SPRINT_MULT = 1.65, PLAYER_H = 1.7, REACH = 6;
 const MAX_INSTANCES = 20000;
 const PEER_PREFIX = 'minimc-fr-';
-const HIDE_SECS = 60, HUNT_SECS = 180;
+const HIDE_SECS = 60, HUNT_SECS = 240; // round total : 5 min (1 min cachette + 4 min chasse)
+const RADAR_EVERY_MS = 30000, RADAR_SHOW_MS = 3000;
 const GUN_RANGE = 45, GUN_HIT_RADIUS = 0.75;
 const PROXIMITY_DIST = 20;
 const MAG_SIZE = 5, RELOAD_MS = 2500, LIVES = 2;
@@ -411,7 +420,20 @@ const sfx = {
   win() { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.18, 'square', 0.14), i * 130)); },
   reload() { tone(400, 0.06, 'square', 0.1); setTimeout(() => tone(600, 0.06, 'square', 0.1), 100); },
   decoy() { tone(500, 0.3, 'sine', 0.15, 900); },
+  radar() { tone(700, 0.1, 'sine', 0.2, 1400); setTimeout(() => tone(1000, 0.12, 'sine', 0.15, 1600), 130); },
 };
+
+// ---------- Musique d'ambiance générative (discrète, via le volume global) ----------
+const SCALE_DAY = [261.6, 293.7, 329.6, 392.0, 440.0, 523.3];   // pentatonique majeure
+const SCALE_HUNT = [220.0, 233.1, 261.6, 311.1, 349.2, 415.3];  // teinte mineure, plus sombre
+setInterval(() => {
+  if (!audioCtx || !locked) return;
+  const hunting = game.mode === 'hide' && game.phase === 'hunting';
+  const scale = hunting ? SCALE_HUNT : SCALE_DAY;
+  const f = scale[Math.floor(Math.random() * scale.length)] * (hunting ? 0.5 : 1);
+  tone(f, 2.2, 'triangle', hunting ? 0.045 : 0.035);
+  if (Math.random() < 0.4) setTimeout(() => tone(f * (hunting ? 1.2 : 1.5), 1.8, 'triangle', 0.025), 800);
+}, 2600);
 
 // ---------- Scène ----------
 const scene = new THREE.Scene();
@@ -430,6 +452,53 @@ const sun = new THREE.DirectionalLight(0xffffff, 0.75);
 sun.position.set(30, 60, 20);
 scene.add(sun);
 
+// ---------- Ciel de nuit : étoiles, lune, lucioles ----------
+const starGeo = new THREE.BufferGeometry();
+{
+  const pos = [];
+  for (let i = 0; i < 220; i++) {
+    const a = Math.random() * Math.PI * 2, e = Math.random() * Math.PI * 0.48, r = 130;
+    pos.push(Math.cos(a) * Math.cos(e) * r, Math.sin(e) * r + 5, Math.sin(a) * Math.cos(e) * r);
+  }
+  starGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+}
+const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.7, transparent: true, opacity: 0, fog: false });
+scene.add(new THREE.Points(starGeo, starMat));
+
+// Lune pixelisée avec ses cratères
+const moonCanvas = document.createElement('canvas');
+moonCanvas.width = 32;
+moonCanvas.height = 32;
+{
+  const mc = moonCanvas.getContext('2d');
+  mc.fillStyle = '#e8e8d8';
+  mc.beginPath(); mc.arc(16, 16, 13, 0, Math.PI * 2); mc.fill();
+  mc.fillStyle = '#c9c9b8';
+  mc.beginPath(); mc.arc(11, 12, 3, 0, Math.PI * 2); mc.fill();
+  mc.beginPath(); mc.arc(20, 19, 2.2, 0, Math.PI * 2); mc.fill();
+  mc.beginPath(); mc.arc(18, 9, 1.6, 0, Math.PI * 2); mc.fill();
+}
+const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(moonCanvas), transparent: true, opacity: 0, fog: false }));
+moon.scale.set(14, 14, 1);
+moon.position.set(70, 85, -60);
+scene.add(moon);
+
+// Lucioles qui flottent doucement au-dessus de l'herbe
+const FIREFLY_N = 24;
+const fireflyAnchors = [];
+const fireflyGeo = new THREE.BufferGeometry();
+for (let i = 0; i < FIREFLY_N; i++) {
+  const x = (Math.random() - 0.5) * WORLD * 0.9;
+  const z = (Math.random() - 0.5) * WORLD * 0.9;
+  fireflyAnchors.push({ x, z, y: heightAt(Math.floor(x), Math.floor(z)) + 1.6, ph: Math.random() * 10 });
+}
+fireflyGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(FIREFLY_N * 3), 3));
+const fireflyMat = new THREE.PointsMaterial({
+  color: 0xd8ff6a, size: 0.14, transparent: true, opacity: 0,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+scene.add(new THREE.Points(fireflyGeo, fireflyMat));
+
 // ---------- Cycle jour/nuit (la nuit tombe pendant la chasse) ----------
 const DAY_SKY = new THREE.Color(0x87ceeb), NIGHT_SKY = new THREE.Color(0x131c33);
 const tmpSky = new THREE.Color();
@@ -445,6 +514,22 @@ function updateDayNight() {
   scene.fog.far = 90 - 38 * p;
   sun.intensity = 0.75 - 0.6 * p;
   ambient.intensity = 0.55 - 0.32 * p;
+
+  // Étoiles et lune qui apparaissent avec la nuit
+  starMat.opacity = p;
+  moon.material.opacity = p;
+
+  // Lucioles : petites dérives sinusoïdales + scintillement
+  const tSec = performance.now() * 0.001;
+  const fPos = fireflyGeo.attributes.position.array;
+  for (let i = 0; i < FIREFLY_N; i++) {
+    const a = fireflyAnchors[i];
+    fPos[i * 3] = a.x + Math.sin(tSec * 0.5 + a.ph) * 1.6;
+    fPos[i * 3 + 1] = a.y + Math.sin(tSec * 0.8 + a.ph * 2) * 0.5;
+    fPos[i * 3 + 2] = a.z + Math.cos(tSec * 0.4 + a.ph) * 1.6;
+  }
+  fireflyGeo.attributes.position.needsUpdate = true;
+  fireflyMat.opacity = p * (0.55 + 0.45 * Math.sin(tSec * 2.5));
 }
 
 // ---------- Monde ----------
@@ -974,6 +1059,9 @@ const resultBox = document.getElementById('resultBox');
 const povTag = document.getElementById('povTag');
 const vignetteEl = document.getElementById('vignette');
 const ammoEl = document.getElementById('ammo');
+const radarEl = document.getElementById('radar');
+const radarArrowEl = document.getElementById('radarArrow');
+let nextRadarAt = 0, radarUntil = 0, radarTarget = null;
 
 function myId() { return net.peer ? net.peer.id : 'local'; }
 function isHunter() { return game.mode === 'hide' && game.hunters.has(myId()); }
@@ -1258,7 +1346,8 @@ function startHunting() {
     ammo = MAG_SIZE;
     reloading = false;
     setThirdPerson(false); // le chasseur vise en 1re personne
-    showNotif('A la chasse ! Clic gauche pour tirer.', 3000);
+    nextRadarAt = Date.now() + RADAR_EVERY_MS;
+    showNotif('A la chasse ! Clic gauche pour tirer. Radar toutes les 30 s.', 3000);
   } else if (!game.dead) {
     showNotif('Le chasseur arrive... ne bouge plus !', 3000);
   }
@@ -1287,6 +1376,8 @@ function endHideSeek(who, scores) {
   updatePaintUI();
   hud.style.display = 'flex';
   vignetteEl.style.opacity = 0;
+  radarEl.style.display = 'none';
+  radarTarget = null;
   sfx.win();
 
   // Au retour a la taille normale, on ne doit pas rester coincé dans un
@@ -1441,6 +1532,7 @@ function onConvert(id) {
     ammo = MAG_SIZE;
     reloading = false;
     setThirdPerson(false);
+    nextRadarAt = Date.now() + RADAR_EVERY_MS;
     showNotif('🧊 Tu as été touché ! Tu deviens CHASSEUR : attrape les autres !', 3500);
   } else {
     showNotif('🧊 ' + nameOf(id) + ' a rejoint les chasseurs !', 2500);
@@ -2336,7 +2428,12 @@ function loop(now) {
   lastBgStep = now;
 
   const hunterRemote = spectating ? remotePlayers.get(game.hunterId) : null;
-  if (hunterRemote) {
+  if (!locked && game.mode !== 'hide') {
+    // Panorama du menu : la caméra tourne lentement au-dessus de la map
+    const pt = now * 0.00006;
+    camera.position.set(Math.cos(pt) * 24, 15 + Math.sin(pt * 0.6) * 3, Math.sin(pt) * 24);
+    camera.lookAt(0, 4, 0);
+  } else if (hunterRemote) {
     const t = hunterRemote.target;
     camera.position.set(t.x, t.y + PLAYER_H - 0.15, t.z);
     camera.rotation.order = 'YXZ';
@@ -2438,6 +2535,39 @@ function loop(now) {
     }
   }
   vignetteEl.style.opacity = Math.max(danger * 0.85, now < vignetteFlashUntil ? 1 : 0);
+
+  // Radar directionnel du chasseur : toutes les 30 s, une flèche indique
+  // pendant 3 s la direction du caché (ou du leurre !) le plus proche.
+  if (game.mode === 'hide' && game.phase === 'hunting' && isHunter() && locked) {
+    if (Date.now() >= nextRadarAt) {
+      nextRadarAt = Date.now() + RADAR_EVERY_MS;
+      let best = null, bestD = Infinity;
+      for (const [id, r] of remotePlayers) {
+        if (!game.alive.has(id)) continue;
+        const d = Math.hypot(r.target.x - player.pos.x, r.target.z - player.pos.z);
+        if (d < bestD) { bestD = d; best = { x: r.target.x, z: r.target.z }; }
+      }
+      for (const dcy of decoys.values()) {
+        const d = Math.hypot(dcy.pos.x - player.pos.x, dcy.pos.z - player.pos.z);
+        if (d < bestD) { bestD = d; best = { x: dcy.pos.x, z: dcy.pos.z }; }
+      }
+      if (best) {
+        radarTarget = best;
+        radarUntil = performance.now() + RADAR_SHOW_MS;
+        sfx.radar();
+      }
+    }
+    if (performance.now() < radarUntil && radarTarget) {
+      const targetYaw = Math.atan2(-(radarTarget.x - player.pos.x), -(radarTarget.z - player.pos.z));
+      const deg = -(targetYaw - player.yaw) * 180 / Math.PI - 90;
+      radarArrowEl.style.transform = `rotate(${deg}deg)`;
+      radarEl.style.display = 'block';
+    } else {
+      radarEl.style.display = 'none';
+    }
+  } else {
+    radarEl.style.display = 'none';
+  }
 
   updateDayNight();
 
