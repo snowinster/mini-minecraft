@@ -82,6 +82,31 @@
   }
   #radarArrow { font-size: 46px; }
   #radar .lbl { font-size: 12px; background: rgba(0,0,0,.5); padding: 3px 10px; border-radius: 5px; margin-top: 2px; }
+  /* ---------- Battle 1v1 : cœurs et charge de l'arc ---------- */
+  .hearts { position: fixed; bottom: 64px; z-index: 10; display: none; }
+  #heartsMe { left: 16px; }
+  #heartsFoe { right: 16px; text-align: right; }
+  .hearts .hname { color: #fff; font-size: 12px; margin-bottom: 2px; text-shadow: 0 0 4px #000; }
+  .heart {
+    position: relative; display: inline-block; font-size: 22px; line-height: 1;
+    color: #3c3c3c; margin-right: 1px; text-shadow: 0 0 3px #000;
+  }
+  .heart .fill {
+    position: absolute; left: 0; top: 0; overflow: hidden;
+    color: #e33030; white-space: nowrap;
+  }
+  .hearts.low .heart { animation: heartShake .35s infinite; }
+  @keyframes heartShake {
+    0%, 100% { transform: translate(0, 0); }
+    25% { transform: translate(-1px, 1px); }
+    75% { transform: translate(1px, -1px); }
+  }
+  #bowCharge {
+    position: fixed; left: 50%; top: 57%; transform: translateX(-50%);
+    width: 130px; height: 10px; background: rgba(0,0,0,.55);
+    border: 2px solid #fff; border-radius: 4px; display: none; z-index: 10;
+  }
+  #bowChargeFill { height: 100%; width: 0; background: linear-gradient(90deg, #ffd94a, #e33030); }
   #blind {
     position: fixed; inset: 0; background: #000; z-index: 15; display: none;
     align-items: center; justify-content: center; flex-direction: column; color: #fff; text-align: center;
@@ -253,6 +278,9 @@
 <div id="vignette"></div>
 <div id="ammo"></div>
 <div id="radar"><div id="radarArrow">➤</div><div class="lbl">📡 Caché le plus proche</div></div>
+<div id="heartsMe" class="hearts"></div>
+<div id="heartsFoe" class="hearts"></div>
+<div id="bowCharge"><div id="bowChargeFill"></div></div>
 <div id="paintInfo"><span class="pc" id="paintSwatch"></span><span id="paintHint">Clic G : peindre &nbsp;|&nbsp; Clic D : pipette &nbsp;|&nbsp; Clic molette : tourner &nbsp;|&nbsp; Molette : zoom &nbsp;|&nbsp; P : sortir</span></div>
 <div id="paintCursor"></div>
 <div id="touchUI">
@@ -295,6 +323,7 @@
       <button class="btn" id="playBtn" style="display:none">Entrer dans le monde</button>
       <button class="btn red" id="practiceBtn" style="display:none">Entraînement cachette</button>
       <button class="btn red" id="hideSeekBtn" style="display:none">Lancer le cache-cache</button>
+      <button class="btn red" id="battleBtn" style="display:none">Lancer le Battle 1v1 ⚔️</button>
       <div class="btnRow">
         <button class="btn gray" id="rulesBtn">Comment jouer</button>
         <button class="btn gray" id="settingsBtn">Options...</button>
@@ -312,6 +341,7 @@
         <div class="rItem"><div class="rIcon">🎨</div><div><b>Peinture camouflage</b> : <kbd>C</kbd> bascule la vue 1re/3e personne (les cachés démarrent en 3e personne). <kbd>P</kbd> ouvre l'atelier : souris = pinceau, clic droit = pipette au pixel près sur les blocs, clic gauche = peindre, clic molette maintenu = tourner autour du perso, molette = zoom. Fonds-toi dans le décor !</div></div>
         <div class="rItem"><div class="rIcon">⭐</div><div><b>Points</b> : reste a moins de 20 blocs du chasseur sans te faire voir pour gagner des points de discrétion.</div></div>
         <div class="rItem"><div class="rIcon">🫀</div><div><b>Tension</b> : ton écran rougit et ton cœur bat quand le chasseur approche. <kbd>V</kbd> : voir la vue du chasseur (cachés / éliminés).</div></div>
+        <div class="rItem"><div class="rIcon">⚔️</div><div><b>Battle 1v1</b> : duel a l'arc a exactement 2 joueurs, premier a 3 manches. 10 cœurs chacun. Maintiens le clic pour bander l'arc (1 s = pleine charge), relâche pour tirer : la flèche a un temps de vol et retombe, anticipe ! Dégâts selon la charge (1 a 2,5 cœurs), <b>headshot = dégâts x2</b>. Brève invincibilité après chaque impact.</div></div>
       </div>
       <button class="btn gray" id="rulesBack">← RETOUR</button>
     </div>
@@ -454,6 +484,10 @@ const sfx = {
   reload() { tone(400, 0.06, 'square', 0.1); setTimeout(() => tone(600, 0.06, 'square', 0.1), 100); },
   decoy() { tone(500, 0.3, 'sine', 0.15, 900); },
   radar() { tone(700, 0.1, 'sine', 0.2, 1400); setTimeout(() => tone(1000, 0.12, 'sine', 0.15, 1600), 130); },
+  bowDraw() { tone(180, 0.35, 'sine', 0.07, 420); },
+  bowShoot() { noiseBurst(0.07, 0.2, 2600); tone(420, 0.12, 'sine', 0.15, 130); },
+  headshot() { tone(1200, 0.09, 'square', 0.2); setTimeout(() => tone(1600, 0.14, 'square', 0.18), 80); },
+  arrowStick() { noiseBurst(0.05, 0.12, 900); },
 };
 
 // ---------- Musique d'ambiance générative (discrète, via le volume global) ----------
@@ -1052,7 +1086,8 @@ function makeGunMesh() {
 function updateHunterModels() {
   for (const [id, r] of remotePlayers) {
     const existing = r.group.getObjectByName('huntergun');
-    const shouldHave = game.mode === 'hide' && game.hunters.has(id);
+    const shouldHave = (game.mode === 'hide' && game.hunters.has(id)) ||
+                       (game.mode === 'battle' && (game.battlePlayers || []).includes(id));
     if (shouldHave && !existing) r.group.add(makeGunMesh());
     if (!shouldHave && existing) r.group.remove(existing);
   }
@@ -1127,6 +1162,8 @@ const game = {
   mode: 'free', phase: null, hunterId: null, hunters: new Set(), convertMode: false,
   alive: new Set(), scores: {}, phaseEnd: 0, dead: false, hits: {}, myLives: LIVES,
   timers: [], scoreInterval: null, readySet: new Set(),
+  // Battle 1v1
+  hp: {}, battlePlayers: [], battleWins: {}, battleRound: 1,
 };
 let spectating = false;
 let hunterPtsBuffer = 0;
@@ -1566,6 +1603,13 @@ function hostLaunchHideSeek(mode) {
 // cachés ; caché parti -> compté comme éliminé (sinon la partie devient
 // ingagnable pour le chasseur).
 function hostHandleLeave(id) {
+  // Battle : le joueur qui part perd le duel
+  if (game.mode === 'battle' && game.battlePlayers.includes(id)) {
+    const winner = game.battlePlayers.find(p => p !== id);
+    net.broadcast({ t: 'bt_end', winner, wins: battleWins }, null);
+    endBattle(winner, battleWins);
+    return;
+  }
   if (game.mode !== 'hide') return;
   if (id === game.hunterId) {
     net.broadcast({ t: 'hs_win', who: 'hiders', scores: game.scores }, null);
@@ -1663,6 +1707,7 @@ function onConvert(id) {
 }
 
 function updateGameUI() {
+  if (game.mode === 'battle') { updateBattleUI(); return; }
   if (game.mode !== 'hide') { banner.style.display = 'none'; bigAlert.style.display = 'none'; return; }
   const remain = Math.max(0, Math.ceil((game.phaseEnd - Date.now()) / 1000));
   const mm = Math.floor(remain / 60), ss = String(remain % 60).padStart(2, '0');
@@ -1766,6 +1811,306 @@ function shoot() {
   if (ammo <= 0) startReload(); else updateAmmoUI();
 }
 
+// ---------- Battle 1v1 : duel a l'arc, cœurs façon Minecraft ----------
+const BOW_CHARGE_MS = 1000;   // temps pour une charge complète
+const BATTLE_WINS_TARGET = 3; // premier a 3 manches
+const ARROW_G = 18;           // gravité des flèches
+const BATTLE_HP = 20;         // 10 cœurs (1 cœur = 2 HP)
+
+const heartsMeEl = document.getElementById('heartsMe');
+const heartsFoeEl = document.getElementById('heartsFoe');
+const bowChargeEl = document.getElementById('bowCharge');
+const bowChargeFillEl = document.getElementById('bowChargeFill');
+
+let battleWins = {};          // suivi des manches côté hôte
+let battleLiveAt = 0;         // fin du compte a rebours
+let battleLastHit = {};       // invincibilité brève après un impact
+let bowCharging = false, bowChargeStart = 0;
+
+function battleActive() {
+  return game.mode === 'battle' && game.phase === 'live';
+}
+
+// --- Cœurs ---
+function heartsHtml(hp) {
+  let html = '<div>';
+  for (let i = 0; i < 10; i++) {
+    const fill = Math.max(0, Math.min(2, hp - i * 2)); // 0, 1 (demi) ou 2
+    html += `<span class="heart"><span class="fill" style="width:${fill * 50}%">♥</span>♥</span>`;
+  }
+  return html + '</div>';
+}
+function renderAllHearts() {
+  if (game.mode !== 'battle' || !game.battlePlayers.length) {
+    heartsMeEl.style.display = 'none';
+    heartsFoeEl.style.display = 'none';
+    return;
+  }
+  const me = myId();
+  const foe = game.battlePlayers.find(p => p !== me) || me;
+  heartsMeEl.innerHTML = `<div class="hname">${nameOf(me)}</div>` + heartsHtml(game.hp[me] || 0);
+  heartsFoeEl.innerHTML = `<div class="hname">${nameOf(foe)}</div>` + heartsHtml(game.hp[foe] || 0);
+  heartsMeEl.style.display = 'block';
+  heartsFoeEl.style.display = 'block';
+  heartsMeEl.classList.toggle('low', (game.hp[me] || 0) <= 4);
+  heartsFoeEl.classList.toggle('low', (game.hp[foe] || 0) <= 4);
+}
+
+// --- Flèches (balistique : vitesse initiale + gravité) ---
+const arrows = [];
+function spawnArrow(pos, vel, owner, dmg, live) {
+  const mesh = new THREE.Group();
+  const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.55), new THREE.MeshLambertMaterial({ color: 0x8b5a2b }));
+  const tip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.12), new THREE.MeshLambertMaterial({ color: 0xd8d8d8 }));
+  tip.position.z = 0.3;
+  mesh.add(shaft, tip);
+  mesh.position.copy(pos);
+  scene.add(mesh);
+  arrows.push({ pos: pos.clone(), prev: pos.clone(), vel: vel.clone(), mesh, owner, dmg, live, born: performance.now(), stuck: 0 });
+}
+function clearArrows() {
+  for (const a of arrows) scene.remove(a.mesh);
+  arrows.length = 0;
+}
+
+// Petites particules d'impact (headshot ou mort)
+function spawnImpactBurst(pos, color, n) {
+  for (let i = 0; i < (n || 6); i++) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.09), new THREE.MeshBasicMaterial({ color }));
+    m.position.copy(pos);
+    scene.add(m);
+    const v = new THREE.Vector3((Math.random() - 0.5) * 5, Math.random() * 4 + 1, (Math.random() - 0.5) * 5);
+    const t0 = performance.now();
+    const tick = () => {
+      const dt = 0.016;
+      v.y -= 12 * dt;
+      m.position.addScaledVector(v, dt);
+      if (performance.now() - t0 < 500) requestAnimationFrame(tick);
+      else scene.remove(m);
+    };
+    requestAnimationFrame(tick);
+  }
+}
+
+// Segment prev->pos contre une sphère (hitbox)
+function segmentHitsSphere(a, center, radius) {
+  const seg = a.pos.clone().sub(a.prev);
+  const len2 = seg.lengthSq() || 1e-6;
+  let t = center.clone().sub(a.prev).dot(seg) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return a.prev.clone().addScaledVector(seg, t).distanceTo(center) < radius;
+}
+
+function updateArrows(dt) {
+  const now = performance.now();
+  for (let i = arrows.length - 1; i >= 0; i--) {
+    const a = arrows[i];
+    if (a.stuck) { // plantée dans le décor, disparait après un moment
+      if (now - a.stuck > 1500) { scene.remove(a.mesh); arrows.splice(i, 1); }
+      continue;
+    }
+    if (now - a.born > 6000) { scene.remove(a.mesh); arrows.splice(i, 1); continue; }
+    a.prev.copy(a.pos);
+    a.vel.y -= ARROW_G * dt;
+    a.pos.addScaledVector(a.vel, dt);
+    a.mesh.position.copy(a.pos);
+    a.mesh.lookAt(a.pos.clone().add(a.vel));
+    if (isSolid(a.pos.x, a.pos.y, a.pos.z)) { a.stuck = now; sfx.arrowStick(); continue; }
+    // collision joueurs : seule la flèche du TIREUR fait des dégâts
+    if (!a.live || !battleActive()) continue;
+    for (const id of game.battlePlayers) {
+      if (id === a.owner || id === myId() || (game.hp[id] || 0) <= 0) continue;
+      const tp = getPlayerPos(id);
+      if (!tp) continue;
+      // deux hitboxes : TETE (critique, dégâts x2) et corps
+      const headC = new THREE.Vector3(tp.x, tp.y + 1.48, tp.z);
+      const bodyC = new THREE.Vector3(tp.x, tp.y + 0.75, tp.z);
+      if (segmentHitsSphere(a, headC, 0.38)) {
+        applyBattleHit(id, a.dmg * 2, true, true);
+        spawnImpactBurst(headC, 0xffd94a, 10);
+        scene.remove(a.mesh); arrows.splice(i, 1);
+        break;
+      }
+      if (segmentHitsSphere(a, bodyC, 0.55)) {
+        applyBattleHit(id, a.dmg, false, true);
+        spawnImpactBurst(bodyC, 0xe33030, 5);
+        scene.remove(a.mesh); arrows.splice(i, 1);
+        break;
+      }
+    }
+  }
+}
+
+// --- Arc : charge en maintenant le clic, relâcher pour tirer ---
+function startBowCharge() {
+  if (!battleActive() || (game.hp[myId()] || 0) <= 0 || !locked) return;
+  bowCharging = true;
+  bowChargeStart = performance.now();
+  bowChargeEl.style.display = 'block';
+  bowChargeFillEl.style.width = '0%';
+  sfx.bowDraw();
+}
+function releaseBow() {
+  if (!bowCharging) return;
+  bowCharging = false;
+  bowChargeEl.style.display = 'none';
+  if (!battleActive() || (game.hp[myId()] || 0) <= 0) return;
+  const t = Math.min(1, (performance.now() - bowChargeStart) / BOW_CHARGE_MS);
+  if (t < 0.15) return; // relâché trop tôt : tir annulé
+  const dir = new THREE.Vector3(0, 0, -1).applyEuler(camera.rotation);
+  const speed = 14 + 26 * t;             // vitesse selon la charge
+  const dmg = Math.round(2 + 3 * t);     // 2 HP (1 cœur) -> 5 HP (2,5 cœurs)
+  const start = headPos().add(dir.clone().multiplyScalar(0.6));
+  const vel = dir.multiplyScalar(speed);
+  spawnArrow(start, vel, myId(), dmg, true);
+  net.broadcast({ t: 'bt_shot', p: [start.x, start.y, start.z], v: [vel.x, vel.y, vel.z] }, null);
+  sfx.bowShoot();
+}
+
+// --- Dégâts / manches ---
+function applyBattleHit(id, dmg, head, fromMe) {
+  if (game.mode !== 'battle' || game.phase !== 'live') return;
+  const now = performance.now();
+  if (fromMe) {
+    if (now - (battleLastHit[id] || 0) < 500) return; // invincibilité brève
+    battleLastHit[id] = now;
+    net.broadcast({ t: 'bt_hit', id, dmg, head }, null);
+    showNotif(head ? '💥 CRITIQUE ! Headshot !' : '🎯 Touché ! (-' + (dmg / 2) + ' cœur)', 1200);
+  }
+  game.hp[id] = Math.max(0, (game.hp[id] || 0) - dmg);
+  if (head) sfx.headshot(); else sfx.hit();
+  if (id === myId()) {
+    vignetteFlashUntil = performance.now() + 350;
+    showNotif(head ? '💥 Headshot reçu !' : '💔 Touché !', 900);
+  }
+  renderAllHearts();
+  hostCheckBattle();
+}
+
+function hostCheckBattle() {
+  if (!net.isHost || game.mode !== 'battle' || game.phase !== 'live') return;
+  for (const id of game.battlePlayers) {
+    if ((game.hp[id] || 0) > 0) continue;
+    const winner = game.battlePlayers.find(p => p !== id);
+    battleWins[winner] = (battleWins[winner] || 0) + 1;
+    if (battleWins[winner] >= BATTLE_WINS_TARGET) {
+      net.broadcast({ t: 'bt_end', winner, wins: battleWins }, null);
+      endBattle(winner, battleWins);
+    } else {
+      net.broadcast({ t: 'bt_round', winner, loser: id, wins: battleWins }, null);
+      onBattleRound(winner, id, battleWins);
+      const nextRound = game.battleRound + 1;
+      game.timers.push(setTimeout(() => {
+        net.broadcast({ t: 'bt_start', players: game.battlePlayers, round: nextRound, wins: battleWins }, null);
+        startBattleRound(game.battlePlayers, nextRound, battleWins);
+      }, 3000));
+    }
+    return;
+  }
+}
+
+function hostLaunchBattle() {
+  const ids = [...new Set(net.conns.filter(c => c.open).map(c => c.peer))];
+  const players = [myId(), ...ids];
+  if (players.length !== 2) { menuMsg.textContent = 'Le Battle 1v1 se joue a exactement 2 joueurs !'; return; }
+  lastLaunch = 'battle';
+  battleWins = {};
+  players.forEach(p => battleWins[p] = 0);
+  net.broadcast({ t: 'bt_start', players, round: 1, wins: battleWins }, null);
+  startBattleRound(players, 1, battleWins);
+}
+
+function startBattleRound(players, round, wins) {
+  clearGameTimers();
+  game.mode = 'battle';
+  game.phase = 'count';
+  game.battlePlayers = players.slice();
+  game.battleRound = round;
+  game.battleWins = wins;
+  game.hp = {};
+  players.forEach(p => game.hp[p] = BATTLE_HP);
+  game.dead = false;
+  battleLiveAt = Date.now() + 3500;
+  battleLastHit = {};
+  bowCharging = false;
+  bowChargeEl.style.display = 'none';
+  clearArrows();
+  setSpectating(false);
+  setPaintMode(false);
+  setThirdPerson(false);
+  deadOverlay.style.display = 'none';
+  resultBox.style.display = 'none';
+  document.getElementById('replayBtn').style.display = 'none';
+  hud.style.display = 'none';
+  // duellistes téléportés face a face
+  const idx = players.indexOf(myId());
+  if (idx >= 0) {
+    const sx = idx === 0 ? -10 : 10;
+    player.pos.set(sx + 0.5, heightAt(sx, 0) + 2, 0.5);
+    player.vel.set(0, 0, 0);
+    player.yaw = idx === 0 ? -Math.PI / 2 : Math.PI / 2; // face au centre
+    player.pitch = 0;
+  }
+  updateHunterModels(); // arcs visibles sur les persos
+  renderAllHearts();
+  banner.style.display = 'block';
+  updateGameUI();
+}
+
+function onBattleRound(winner, loser, wins) {
+  game.phase = 'between';
+  game.battleWins = wins;
+  clearArrows();
+  bowCharging = false;
+  bowChargeEl.style.display = 'none';
+  const lp = getPlayerPos(loser);
+  if (lp) spawnImpactBurst(new THREE.Vector3(lp.x, lp.y + 1, lp.z), 0xe33030, 14);
+  sfx.dead();
+  bigAlert.style.display = 'block';
+  bigAlert.innerHTML = `💀 ${nameOf(loser)} est a terre !<br><span class="hint">${nameOf(winner)} mène ${wins[winner] || 0} - ${wins[loser] || 0}</span>`;
+  setTimeout(() => { if (game.phase === 'between') bigAlert.style.display = 'none'; }, 2800);
+}
+
+function endBattle(winner, wins) {
+  clearGameTimers();
+  game.mode = 'free';
+  game.phase = 'end';
+  clearArrows();
+  bowCharging = false;
+  bowChargeEl.style.display = 'none';
+  banner.style.display = 'none';
+  bigAlert.style.display = 'none';
+  hud.style.display = 'flex';
+  renderAllHearts(); // les masque (mode != battle)
+  updateHunterModels();
+  sfx.win();
+  const lines = (game.battlePlayers || []).map(id => `${nameOf(id)} : ${wins[id] || 0} manche(s)`).join('<br>');
+  resultBox.innerHTML = `<div class="win">⚔️ ${nameOf(winner)} REMPORTE LE DUEL !</div>${lines}`;
+  resultBox.style.display = 'block';
+  const canReplay = net.isHost && net.conns.some(c => c.open);
+  document.getElementById('replayBtn').style.display = canReplay ? 'block' : 'none';
+  document.exitPointerLock();
+}
+
+// Bandeau + compte a rebours du battle
+function updateBattleUI() {
+  const wins = game.battleWins || {};
+  const me = myId(), foe = (game.battlePlayers || []).find(p => p !== me);
+  banner.style.display = 'block';
+  banner.innerHTML = `⚔️ BATTLE 1v1 - Manche ${game.battleRound}<div class="sub">${nameOf(me)} ${wins[me] || 0} - ${wins[foe] || 0} ${nameOf(foe)} · premier a ${BATTLE_WINS_TARGET} · vise la tête = dégâts x2 !</div>`;
+  if (game.phase === 'count') {
+    const remain = Math.ceil((battleLiveAt - Date.now()) / 1000);
+    if (remain > 0) {
+      bigAlert.style.display = 'block';
+      bigAlert.innerHTML = `⚔️ EN GARDE !<br><span class="secs">${remain}</span><br><span class="hint">Maintiens le clic pour bander l'arc, relâche pour tirer</span>`;
+    } else {
+      game.phase = 'live';
+      bigAlert.style.display = 'none';
+      showNotif('GO ! ⚔️', 1500);
+    }
+  }
+}
+
 // ---------- Réseau ----------
 const net = {
   peer: null, isHost: false, conns: [],
@@ -1789,6 +2134,7 @@ const net = {
         conn.send({ t: 'init', edits: [...edits.entries()] });
         updateNetStatus();
         document.getElementById('hideSeekBtn').style.display = 'block';
+        document.getElementById('battleBtn').style.display = 'block';
       });
       conn.on('data', d => this.onData(conn, d));
       conn.on('close', () => {
@@ -1872,6 +2218,17 @@ const net = {
       onDead(d.id);
     } else if (d.t === 'hs_win') {
       endHideSeek(d.who, d.scores);
+    } else if (d.t === 'bt_start') {
+      startBattleRound(d.players, d.round, d.wins);
+    } else if (d.t === 'bt_shot') {
+      spawnArrow(new THREE.Vector3(d.p[0], d.p[1], d.p[2]), new THREE.Vector3(d.v[0], d.v[1], d.v[2]), 'remote', 0, false);
+      sfx.bowShoot();
+    } else if (d.t === 'bt_hit') {
+      applyBattleHit(d.id, d.dmg, d.head, false);
+    } else if (d.t === 'bt_round') {
+      onBattleRound(d.winner, d.loser, d.wins);
+    } else if (d.t === 'bt_end') {
+      endBattle(d.winner, d.wins);
     }
   },
 
@@ -2122,6 +2479,10 @@ document.getElementById('hideSeekBtn').onclick = () => {
   hostLaunchHideSeek('classic');
   if (game.mode === 'hide') enterWorld();
 };
+document.getElementById('battleBtn').onclick = () => {
+  hostLaunchBattle();
+  if (game.mode === 'battle') enterWorld();
+};
 
 playBtn.onclick = () => enterWorld();
 
@@ -2135,6 +2496,9 @@ document.getElementById('replayBtn').onclick = () => {
   if (lastLaunch === 'practice') {
     startPractice();
     enterWorld();
+  } else if (lastLaunch === 'battle') {
+    hostLaunchBattle();
+    if (game.mode === 'battle') enterWorld();
   } else {
     hostLaunchHideSeek(lastLaunch);
     if (game.mode === 'hide') enterWorld();
@@ -2384,7 +2748,11 @@ if (IS_TOUCH) {
     el.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); fn(); }, { passive: false });
   }
   bindBtn($('tJump'), () => { touchJumpQueued = true; });
-  bindBtn($('tShoot'), () => { if (isHunter() && game.phase === 'hunting' && locked) shoot(); });
+  bindBtn($('tShoot'), () => {
+    if (game.mode === 'battle') startBowCharge(); // maintenir = charger l'arc
+    else if (isHunter() && game.phase === 'hunting' && locked) shoot();
+  });
+  $('tShoot').addEventListener('touchend', e => { e.preventDefault(); releaseBow(); }, { passive: false });
   bindBtn($('tBreak'), () => touchEditBlock(false));
   bindBtn($('tPlace'), () => touchEditBlock(true));
   bindBtn($('tPaint'), () => { if (!isHunter() && !game.dead && !spectating) setPaintMode(!paintMode); });
@@ -2429,7 +2797,7 @@ if (IS_TOUCH) {
     const hunter = isHunter(), inHide = game.mode === 'hide';
     showEl(joyBase, !paintMode);
     showEl($('tJump'), !paintMode);
-    showEl($('tShoot'), !paintMode && hunter && game.phase === 'hunting');
+    showEl($('tShoot'), !paintMode && ((hunter && game.phase === 'hunting') || game.mode === 'battle'));
     showEl($('tBreak'), !paintMode && !inHide && !hunter);
     showEl($('tPlace'), !paintMode && !inHide && !hunter);
     showEl($('tPipette'), paintMode);
@@ -2482,6 +2850,12 @@ document.addEventListener('mousedown', e => {
   if (!locked || game.dead || spectating) return;
   if (isHunter() && game.phase === 'hiding') return;
 
+  // Battle 1v1 : clic maintenu = charge de l'arc
+  if (game.mode === 'battle') {
+    if (e.button === 0) startBowCharge();
+    return;
+  }
+
   if (isHunter()) {
     if (game.phase === 'hunting' && e.button === 0) shoot();
     return;
@@ -2523,6 +2897,7 @@ document.addEventListener('mouseup', () => {
   orbitDragging = false;
   lastStrokeX = lastStrokeY = null;
   strokePart = null;
+  releaseBow(); // Battle 1v1 : relâcher = décocher la flèche
 });
 document.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -2736,7 +3111,7 @@ function loop(now) {
   }
 
   // Surbrillance du bloc visé (seulement quand on peut construire)
-  if (locked && !frozen && !isHunter() && game.mode !== 'hide' && !paintMode) {
+  if (locked && !frozen && !isHunter() && game.mode === 'free' && !paintMode) {
     const aim = raycastVoxel(REACH, thirdPerson ? headPos() : null);
     if (aim) { hlBox.position.set(aim.x + 0.5, aim.y + 0.5, aim.z + 0.5); hlBox.visible = true; }
     else hlBox.visible = false;
@@ -2793,6 +3168,13 @@ function loop(now) {
     }
   } else {
     radarEl.style.display = 'none';
+  }
+
+  // Battle 1v1 : flèches en vol + barre de charge de l'arc
+  updateArrows(dt);
+  if (bowCharging) {
+    const pct = Math.min(1, (now - bowChargeStart) / BOW_CHARGE_MS);
+    bowChargeFillEl.style.width = (pct * 100) + '%';
   }
 
   updateDayNight();
