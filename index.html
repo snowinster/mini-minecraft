@@ -107,6 +107,15 @@
     border: 2px solid #fff; border-radius: 4px; display: none; z-index: 10;
   }
   #bowChargeFill { height: 100%; width: 0; background: linear-gradient(90deg, #ffd94a, #e33030); }
+  /* Arc pixel-art en vue 1re personne */
+  #bowView {
+    position: fixed; right: 3%; bottom: -34px; width: 240px; height: 240px;
+    image-rendering: pixelated; z-index: 9; display: none; pointer-events: none;
+    transform: rotate(-28deg);
+    transition: transform .12s ease-out;
+    filter: drop-shadow(3px 5px 4px rgba(0,0,0,.35));
+  }
+  #bowView.drawn { transform: rotate(-19deg) translate(-16px, -10px) scale(1.07); }
   #blind {
     position: fixed; inset: 0; background: #000; z-index: 15; display: none;
     align-items: center; justify-content: center; flex-direction: column; color: #fff; text-align: center;
@@ -281,6 +290,7 @@
 <div id="heartsMe" class="hearts"></div>
 <div id="heartsFoe" class="hearts"></div>
 <div id="bowCharge"><div id="bowChargeFill"></div></div>
+<canvas id="bowView" width="32" height="32"></canvas>
 <div id="paintInfo"><span class="pc" id="paintSwatch"></span><span id="paintHint">Clic G : peindre &nbsp;|&nbsp; Clic D : pipette &nbsp;|&nbsp; Clic molette : tourner &nbsp;|&nbsp; Molette : zoom &nbsp;|&nbsp; P : sortir</span></div>
 <div id="paintCursor"></div>
 <div id="touchUI">
@@ -1070,6 +1080,30 @@ function setRemoteName(r, name) {
   r.group.add(makeNameSprite(name));
 }
 
+// Arc 3D visible dans les mains des duellistes (Battle 1v1)
+function makeBowMesh() {
+  const g = new THREE.Group();
+  g.name = 'heldbow';
+  const wood = new THREE.MeshLambertMaterial({ color: 0x8b5a2b });
+  // trois segments inclinés qui dessinent la courbure de l'arc
+  const seg = (y, z, rx, len) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.05, len, 0.05), wood);
+    m.position.set(0, y, z);
+    m.rotation.x = rx;
+    return m;
+  };
+  g.add(seg(0.24, -0.06, 0.55, 0.28));
+  g.add(seg(0, -0.13, 0, 0.26));
+  g.add(seg(-0.24, -0.06, -0.55, 0.28));
+  // corde tendue entre les deux extrémités
+  const string = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.66, 0.015), new THREE.MeshBasicMaterial({ color: 0xe8e8e8 }));
+  string.position.set(0, 0, 0.05);
+  g.add(string);
+  g.position.set(0.34, 1.1, -0.2);
+  g.rotation.y = 0.4;
+  return g;
+}
+
 // Fusil visible dans les mains du chasseur (pour les autres joueurs)
 function makeGunMesh() {
   const g = new THREE.Group();
@@ -1085,11 +1119,14 @@ function makeGunMesh() {
 
 function updateHunterModels() {
   for (const [id, r] of remotePlayers) {
-    const existing = r.group.getObjectByName('huntergun');
-    const shouldHave = (game.mode === 'hide' && game.hunters.has(id)) ||
-                       (game.mode === 'battle' && (game.battlePlayers || []).includes(id));
-    if (shouldHave && !existing) r.group.add(makeGunMesh());
-    if (!shouldHave && existing) r.group.remove(existing);
+    const gun = r.group.getObjectByName('huntergun');
+    const bow = r.group.getObjectByName('heldbow');
+    const wantGun = game.mode === 'hide' && game.hunters.has(id);
+    const wantBow = game.mode === 'battle' && (game.battlePlayers || []).includes(id);
+    if (wantGun && !gun) r.group.add(makeGunMesh());
+    if (!wantGun && gun) r.group.remove(gun);
+    if (wantBow && !bow) r.group.add(makeBowMesh());
+    if (!wantBow && bow) r.group.remove(bow);
   }
 }
 
@@ -1821,6 +1858,57 @@ const heartsMeEl = document.getElementById('heartsMe');
 const heartsFoeEl = document.getElementById('heartsFoe');
 const bowChargeEl = document.getElementById('bowCharge');
 const bowChargeFillEl = document.getElementById('bowChargeFill');
+const bowViewEl = document.getElementById('bowView');
+const bowCtx = bowViewEl.getContext('2d');
+
+// Arc pixel-art en vue 1re personne : l'arc se courbe et la corde recule
+// avec la charge, la flèche encochée recule avec elle.
+function drawBow(charge) {
+  const c = bowCtx;
+  c.clearRect(0, 0, 32, 32);
+  const ctrlX = 13 - charge * 3.5;  // courbure des branches
+  const apexX = 21 + charge * 6;    // recul de la corde
+  // branches : contour sombre puis bois
+  for (const [col, w] of [['#4a2d12', 4.6], ['#8b5a2b', 2.6]]) {
+    c.strokeStyle = col;
+    c.lineWidth = w;
+    c.lineCap = 'round';
+    c.beginPath();
+    c.moveTo(21, 3);
+    c.quadraticCurveTo(ctrlX, 16, 21, 29);
+    c.stroke();
+  }
+  // poignée en cuir au milieu de l'arc
+  const midX = 10.5 + 0.5 * ctrlX;
+  c.strokeStyle = '#5e3a1a';
+  c.lineWidth = 3;
+  c.beginPath();
+  c.moveTo(midX, 13);
+  c.lineTo(midX, 19);
+  c.stroke();
+  // corde
+  c.strokeStyle = '#ececec';
+  c.lineWidth = 1;
+  c.beginPath();
+  c.moveTo(21, 3.5);
+  c.lineTo(apexX, 16);
+  c.lineTo(21, 28.5);
+  c.stroke();
+  // flèche encochée pendant la charge
+  if (charge > 0.02) {
+    c.strokeStyle = '#8b5a2b';
+    c.lineWidth = 1.4;
+    c.beginPath();
+    c.moveTo(apexX - 16, 16);
+    c.lineTo(apexX, 16);
+    c.stroke();
+    c.fillStyle = '#cfcfcf'; // pointe
+    c.fillRect(apexX - 18, 14.8, 3, 2.4);
+    c.fillStyle = '#e35050'; // plumes
+    c.fillRect(apexX - 3, 13.6, 2.4, 1.6);
+    c.fillRect(apexX - 3, 16.8, 2.4, 1.6);
+  }
+}
 
 let battleWins = {};          // suivi des manches côté hôte
 let battleLiveAt = 0;         // fin du compte a rebours
@@ -3170,11 +3258,15 @@ function loop(now) {
     radarEl.style.display = 'none';
   }
 
-  // Battle 1v1 : flèches en vol + barre de charge de l'arc
+  // Battle 1v1 : flèches en vol + arc en main + barre de charge
   updateArrows(dt);
-  if (bowCharging) {
-    const pct = Math.min(1, (now - bowChargeStart) / BOW_CHARGE_MS);
-    bowChargeFillEl.style.width = (pct * 100) + '%';
+  const showBow = game.mode === 'battle' && locked && !spectating;
+  bowViewEl.style.display = showBow ? 'block' : 'none';
+  if (showBow) {
+    const pct = bowCharging ? Math.min(1, (now - bowChargeStart) / BOW_CHARGE_MS) : 0;
+    drawBow(pct);
+    bowViewEl.classList.toggle('drawn', bowCharging);
+    if (bowCharging) bowChargeFillEl.style.width = (pct * 100) + '%';
   }
 
   updateDayNight();
