@@ -291,6 +291,7 @@
   <button class="tbtn" id="tBreak" style="right:28px;bottom:184px">⛏️</button>
   <button class="tbtn" id="tPlace" style="right:96px;bottom:212px">🧱</button>
   <button class="tbtn" id="tPipette" style="right:100px;bottom:118px">💉</button>
+  <button class="tbtn" id="tBrush" style="right:180px;bottom:118px">🖌️</button>
   <button class="tbtn" id="tView" style="right:16px;top:86px">📷</button>
   <button class="tbtn" id="tPaint" style="right:16px;top:148px">🎨</button>
   <button class="tbtn" id="tDecoy" style="right:16px;top:210px">🎭</button>
@@ -337,7 +338,7 @@
       <div class="rules">
         <div class="rItem"><div class="rIcon">🎮</div><div><b>Contrôles</b> : ZQSD / WASD pour bouger, <kbd>MAJ</kbd> sprint, <kbd>ESPACE</kbd> sauter. Clic gauche : casser / tirer. Clic droit : poser un bloc. Toutes les touches sont modifiables dans les Réglages.</div></div>
         <div class="rItem"><div class="rIcon">🙈</div><div><b>Cache-cache</b> : un chasseur est tiré au sort. Les cachés ont 60 s pour se planquer (<kbd>R</kbd> = prêt en avance), puis 4 min de chasse pendant que la nuit tombe. Toutes les 30 s, le chasseur reçoit un <b>radar</b> : une flèche indique 3 s la direction du caché le plus proche... ou d'un leurre !</div></div>
-        <div class="rItem"><div class="rIcon">❤️</div><div><b>Survie</b> : les cachés sont <b>3x plus petits</b>, ont 2 vies mais ne peuvent pas toucher aux blocs — leurs armes : la taille et le camouflage. Le chasseur a 5 balles par chargeur, rechargement 2,5 s.</div></div>
+        <div class="rItem"><div class="rIcon">❤️</div><div><b>Survie</b> : les cachés sont rétrécis a <b>1 bloc de haut</b>, ont 2 vies mais ne peuvent pas toucher aux blocs — leurs armes : la taille et le camouflage. Le chasseur a 5 balles par chargeur, rechargement 2,5 s.</div></div>
         <div class="rItem"><div class="rIcon">🎭</div><div><b>Leurre</b> : <kbd>F</kbd> pose un faux joueur (1 par partie) pour piéger le chasseur.</div></div>
         <div class="rItem"><div class="rIcon">🎨</div><div><b>Peinture camouflage</b> : <kbd>C</kbd> bascule la vue 1re/3e personne (les cachés démarrent en 3e personne). <kbd>P</kbd> ouvre l'atelier : souris = pinceau, clic droit = pipette au pixel près sur les blocs, clic gauche = peindre, clic molette maintenu = tourner autour du perso, molette = zoom. Fonds-toi dans le décor !</div></div>
         <div class="rItem"><div class="rIcon">⭐</div><div><b>Points</b> : reste a moins de 20 blocs du chasseur sans te faire voir pour gagner des points de discrétion.</div></div>
@@ -394,6 +395,8 @@ const TYPES = {
   glass:    { name: 'Vitre',  top: 0xa8dcf0, side: 0x9fd4ea },
   dark:     { name: 'Ardoise',top: 0x424956, side: 0x3a404c },
   pink:     { name: 'Rose',   top: 0xf097c0, side: 0xe888b5 },
+  water:    { name: 'Eau',    top: 0x3d6fd8, side: 0x3565c8 },
+  lava:     { name: 'Lave',   top: 0xe06010, side: 0xd05008 },
 };
 // Les blocs "décor" (murs, toits, vitres) servent aux bâtiments générés
 // et ne sont pas dans la barre d'inventaire.
@@ -669,6 +672,18 @@ function makeBlockTexture(base, kind) {
     c.fillRect(2, 2, 2, 9);
     c.fillRect(6, 6, 1, 7);
     c.fillRect(10, 3, 1, 5);
+  } else if (kind === 'water') {
+    // petites vaguelettes claires
+    for (let i = 0; i < 8; i++) {
+      c.fillStyle = shadeCss(base, 1.3);
+      c.fillRect(Math.floor(Math.random() * (S - 4)), Math.floor(Math.random() * S), 3 + Math.floor(Math.random() * 2), 1);
+    }
+  } else if (kind === 'lava') {
+    // coulées jaunes incandescentes
+    for (let i = 0; i < 7; i++) {
+      c.fillStyle = i % 2 ? '#ffd94a' : '#ff9020';
+      c.fillRect(Math.floor(Math.random() * (S - 3)), Math.floor(Math.random() * (S - 2)), 2 + Math.floor(Math.random() * 3), 2);
+    }
   }
   const tex = new THREE.CanvasTexture(canvas);
   tex.magFilter = THREE.NearestFilter;
@@ -687,6 +702,8 @@ const BLOCK_KINDS = {
   glass:    { top: 'glass', side: 'glass' },
   dark:     { top: 'plain', side: 'plain' },
   pink:     { top: 'plain', side: 'plain' },
+  water:    { top: 'water', side: 'water' },
+  lava:     { top: 'lava',  side: 'lava' },
 };
 
 const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -694,8 +711,16 @@ const NEIGHBORS = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
 const instanced = {};
 for (const t of Object.keys(TYPES)) {
   const c = TYPES[t];
-  const side = new THREE.MeshLambertMaterial({ map: makeBlockTexture(c.side, BLOCK_KINDS[t].side) });
-  const top = new THREE.MeshLambertMaterial({ map: makeBlockTexture(c.top, BLOCK_KINDS[t].top) });
+  // eau translucide ; lave auto-éclairée (elle brille même la nuit)
+  const mkMat = (base, kind) => {
+    const tex = makeBlockTexture(base, kind);
+    if (t === 'lava') return new THREE.MeshBasicMaterial({ map: tex });
+    const m = new THREE.MeshLambertMaterial({ map: tex });
+    if (t === 'water') { m.transparent = true; m.opacity = 0.75; }
+    return m;
+  };
+  const side = mkMat(c.side, BLOCK_KINDS[t].side);
+  const top = mkMat(c.top, BLOCK_KINDS[t].top);
   const mesh = new THREE.InstancedMesh(geo, [side, side, top, side, side, side], MAX_INSTANCES);
   mesh.count = 0;
   mesh.frustumCulled = false;
@@ -854,6 +879,22 @@ function buildHouse(x0, z0) {
   }
 }
 
+// Petit bassin d'eau ou poche de lave creusé dans le terrain, avec un
+// bord irrégulier façon Minecraft (1 bloc de profondeur, on en ressort
+// d'un saut).
+function carvePool(cx, cz, type, r) {
+  const hc = heightAt(cx, cz);
+  for (let dx = -r; dx <= r; dx++) {
+    for (let dz = -r; dz <= r; dz++) {
+      if (dx * dx + dz * dz > r * r + ihash(cx + dx, cz + dz, 42) * 2.5) continue;
+      const wx = cx + dx, wz = cz + dz;
+      for (let y = hc; y <= hc + 7; y++) world.delete(key(wx, y, wz));
+      world.set(key(wx, hc, wz), type);
+      world.set(key(wx, hc - 1, wz), 'dirt'); // fond du bassin
+    }
+  }
+}
+
 function generateWorld() {
   world.clear();
   const half = WORLD / 2;
@@ -903,6 +944,15 @@ function generateWorld() {
   for (let x = -half + 4; x < half - 8; x++)
     for (let z = -half + 4; z < half - 8; z++)
       if (ihash(x, z, 20) > 0.995) buildHouse(x, z);
+
+  // Points d'eau et poches de lave, rares, loin du spawn et des duels
+  for (let x = -half + 4; x < half - 4; x++) {
+    for (let z = -half + 4; z < half - 4; z++) {
+      if (Math.hypot(x, z) < 14) continue;
+      if (ihash(x, z, 40) > 0.9988) carvePool(x, z, 'water', 3);
+      else if (ihash(x, z, 41) > 0.9994) carvePool(x, z, 'lava', 2);
+    }
+  }
 
   for (const [k, t] of edits) {
     if (t === null) world.delete(k);
@@ -1223,9 +1273,9 @@ let nextRadarAt = 0, radarUntil = 0, radarTarget = null;
 function myId() { return net.peer ? net.peer.id : 'local'; }
 function isHunter() { return game.mode === 'hide' && game.hunters.has(myId()); }
 
-// Les cachés sont 3x plus petits pendant le cache-cache (plus facile de
-// se cacher). Le chasseur garde sa taille normale.
-const HIDER_SCALE = 1 / 3;
+// Les cachés sont rétrécis pendant le cache-cache : environ 1 bloc de
+// haut (1.7 x 0.58 ≈ 1). Le chasseur garde sa taille normale.
+const HIDER_SCALE = 0.58;
 function myScale() { return (game.mode === 'hide' && !isHunter()) ? HIDER_SCALE : 1; }
 
 // Deux états séparés :
@@ -1270,9 +1320,21 @@ const paintCursorEl = document.getElementById('paintCursor');
 let paintColor = 0x5aa832;
 const paintRaycaster = new THREE.Raycaster();
 
+// Taille du pinceau : précis, large (défaut) ou pot de peinture (remplit
+// toute la face visée d'un coup - pratique pour les bras et les jambes)
+let paintBrush = 'big';
+const BRUSH_ORDER = ['pixel', 'big', 'fill'];
+const BRUSH_LABELS = { pixel: '1 px', big: '2x2', fill: '🪣 remplir la face' };
+
 function updatePaintUI() {
   paintInfoEl.style.display = (paintMode && !isHunter()) ? 'block' : 'none';
   paintSwatchEl.style.background = cssColor(paintColor);
+  const hint = document.getElementById('paintHint');
+  if (IS_TOUCH) {
+    hint.textContent = `Pinceau : ${BRUSH_LABELS[paintBrush]} (🖌️ pour changer) | doigt : peindre | 2 doigts : tourner / zoomer | 💉 pipette`;
+  } else {
+    hint.textContent = `Pinceau : ${BRUSH_LABELS[paintBrush]} (touches 1/2/3) | Clic G : peindre | Clic D : pipette | Clic molette : tourner | Molette : zoom | P : sortir`;
+  }
 }
 
 // Coordonnées normalisées du curseur-pinceau pour le raycast
@@ -1302,12 +1364,30 @@ function paintAtScreen(x, y, quiet) {
   const p = hit.object.material[face].userData;
   const px = Math.min(SKIN_RES - 1, Math.floor(hit.uv.x * SKIN_RES));
   const py = Math.min(SKIN_RES - 1, Math.floor((1 - hit.uv.y) * SKIN_RES));
-  if (mySkin[name][face][py * SKIN_RES + px] === paintColor) return; // déjà peint
+  // pixels a peindre selon le pinceau : 1 px, 2x2 ou toute la face
+  const stamps = [];
+  if (paintBrush === 'fill') {
+    for (let i = 0; i < SKIN_RES * SKIN_RES; i++) stamps.push(i);
+  } else {
+    const size = paintBrush === 'big' ? 2 : 1;
+    for (let oy = 0; oy < size; oy++) {
+      for (let ox = 0; ox < size; ox++) {
+        stamps.push(Math.min(SKIN_RES - 1, py + oy) * SKIN_RES + Math.min(SKIN_RES - 1, px + ox));
+      }
+    }
+  }
+  let changed = false;
   p.ctx.fillStyle = cssColor(paintColor);
-  p.ctx.fillRect(px, py, 1, 1);
-  p.tex.needsUpdate = true;
-  mySkin[name][face][py * SKIN_RES + px] = paintColor;
-  queueSkinSync();
+  for (const idx of stamps) {
+    if (mySkin[name][face][idx] === paintColor) continue;
+    mySkin[name][face][idx] = paintColor;
+    p.ctx.fillRect(idx % SKIN_RES, Math.floor(idx / SKIN_RES), 1, 1);
+    changed = true;
+  }
+  if (changed) {
+    p.tex.needsUpdate = true;
+    queueSkinSync();
+  }
 }
 
 function paintSelf(quiet) { paintAtScreen(cursorX, cursorY, quiet); }
@@ -2384,7 +2464,8 @@ const player = {
 };
 
 function isSolid(x, y, z) {
-  return world.has(key(Math.floor(x), Math.floor(y), Math.floor(z)));
+  const t = world.get(key(Math.floor(x), Math.floor(y), Math.floor(z)));
+  return t !== undefined && t !== 'water' && t !== 'lava'; // on entre dans les liquides
 }
 function collide(pos) {
   const s = myScale();
@@ -2693,7 +2774,13 @@ document.addEventListener('keydown', e => {
   if (!locked) return;
   if (e.code.startsWith('Digit')) {
     const n = parseInt(e.code.slice(5)) - 1;
-    if (n >= 0 && n < PLACEABLE.length) { selected = n; updateHud(); }
+    if (paintMode) {
+      // en atelier, 1/2/3 changent la taille du pinceau
+      if (n >= 0 && n < BRUSH_ORDER.length) { paintBrush = BRUSH_ORDER[n]; updatePaintUI(); }
+    } else if (n >= 0 && n < PLACEABLE.length) {
+      selected = n;
+      updateHud();
+    }
   }
   if (e.code === settings.binds.ready && game.mode === 'hide' && game.phase === 'hiding' && !isHunter() && !game.dead) {
     if (net.isHost) hostMarkReady(myId());
@@ -2746,7 +2833,6 @@ if (IS_TOUCH) {
   const touchUI = $('touchUI');
   const clampNum = (v, a, b) => Math.max(a, Math.min(b, v));
 
-  $('paintHint').textContent = 'Doigt : peindre | 2 doigts : tourner / zoomer | 💉 puis touche un bloc : pipette';
 
   // Joystick de déplacement (pousser a fond = sprint)
   const joyBase = $('joyBase'), joyKnob = $('joyKnob');
@@ -2891,6 +2977,11 @@ if (IS_TOUCH) {
     $('tPipette').classList.toggle('armed', pipetteArmed);
     showNotif(pipetteArmed ? '💉 Touche un bloc pour prendre sa couleur' : 'Pipette annulée', 1500);
   });
+  bindBtn($('tBrush'), () => {
+    paintBrush = BRUSH_ORDER[(BRUSH_ORDER.indexOf(paintBrush) + 1) % BRUSH_ORDER.length];
+    updatePaintUI();
+    showNotif('🖌️ Pinceau : ' + BRUSH_LABELS[paintBrush], 1500);
+  });
   bindBtn($('tMenu'), () => { locked = false; overlay.style.display = 'flex'; });
 
   function touchEditBlock(place) {
@@ -2921,6 +3012,7 @@ if (IS_TOUCH) {
     showEl($('tBreak'), !paintMode && !inHide && !hunter);
     showEl($('tPlace'), !paintMode && !inHide && !hunter);
     showEl($('tPipette'), paintMode);
+    showEl($('tBrush'), paintMode);
     showEl($('tView'), !(hunter && game.phase === 'hunting'));
     showEl($('tPaint'), !hunter && !game.dead);
     showEl($('tDecoy'), inHide && !hunter && !game.dead && !decoyUsed);
