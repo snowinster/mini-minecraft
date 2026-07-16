@@ -122,8 +122,9 @@
   /* ---------- Menu ---------- */
   #overlay {
     position: fixed; inset: 0; z-index: 20; color: #fff;
-    background: radial-gradient(ellipse at center, rgba(12,16,26,.45) 0%, rgba(8,10,18,.85) 100%);
-    backdrop-filter: blur(4px);
+    /* pas de backdrop-filter : flouter tout l'écran a chaque image
+       ruine les performances quand le panorama bouge derrière */
+    background: radial-gradient(ellipse at center, rgba(12,16,26,.5) 0%, rgba(8,10,18,.88) 100%);
     display: flex; align-items: center; justify-content: center;
   }
   #menuCard {
