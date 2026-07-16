@@ -3424,8 +3424,13 @@ function stepPhysics(dt, canControl) {
     const fluidSlow = inFluid ? (inFluid.t === 'lava' ? 0.35 : 0.55) : 1;
     if (move.lengthSq() > 0) move.normalize().multiplyScalar(SPEED * (sprintDown ? SPRINT_MULT : 1) * fluidSlow);
     if (keys[B.jump] || touchJumpQueued) {
-      if (inFluid) player.vel.y = inFluid.t === 'water' ? 3.4 : 2.2; // nage / se hisse
-      else if (player.onGround) { player.vel.y = JUMP; player.onGround = false; }
+      if (player.onGround) {
+        // posé au fond ou au sol : vrai saut, on sort d'un bassin d'un bloc
+        player.vel.y = JUMP;
+        player.onGround = false;
+      } else if (inFluid) {
+        player.vel.y = inFluid.t === 'water' ? 5 : 3.5; // nage assez fort pour se hisser
+      }
     }
   }
   touchJumpQueued = false;
