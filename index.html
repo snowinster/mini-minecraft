@@ -383,6 +383,20 @@ let soloMode = false;
 const GRAVITY = 26, JUMP = 9, SPEED = 6, SPRINT_MULT = 1.65, PLAYER_H = 1.7, REACH = 6;
 const MAX_INSTANCES = 60000;
 const PEER_PREFIX = 'minimc-fr-';
+// STUN + TURN : sans relais TURN, téléphone (4G/5G) <-> PC échoue souvent
+// (NAT symétrique des opérateurs mobiles). Le TURN fait transiter les
+// données quand la connexion directe est impossible.
+const PEER_CONFIG = {
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:global.stun.twilio.com:3478' },
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+    ],
+  },
+};
 const HIDE_SECS = 60, HUNT_SECS = 240; // round total : 5 min (1 min cachette + 4 min chasse)
 const RADAR_EVERY_MS = 30000, RADAR_SHOW_MS = 3000;
 const GUN_RANGE = 45, GUN_HIT_RADIUS = 0.75;
@@ -2590,7 +2604,7 @@ const net = {
 
   host(onReady, onError) {
     const code = this.makeCode();
-    this.peer = new Peer(PEER_PREFIX + code);
+    this.peer = new Peer(PEER_PREFIX + code, PEER_CONFIG);
     this.isHost = true;
     this.peer.on('open', () => onReady(code));
     this.peer.on('error', e => onError(e));
@@ -2614,7 +2628,7 @@ const net = {
   },
 
   join(code, onReady, onError) {
-    this.peer = new Peer();
+    this.peer = new Peer(undefined, PEER_CONFIG);
     this.isHost = false;
     this.peer.on('open', () => {
       const conn = this.peer.connect(PEER_PREFIX + code.toUpperCase(), { reliable: true });
@@ -2632,7 +2646,8 @@ const net = {
       });
       conn.on('close', () => { setStatus('Déconnecté de l\'hôte'); this.conns = []; });
       conn.on('error', e => onError(e));
-      setTimeout(() => { if (!opened) onError(new Error('timeout')); }, 8000);
+      // délai généreux : la négociation via relais TURN (mobile) est lente
+      setTimeout(() => { if (!opened) onError(new Error('timeout')); }, 20000);
     });
     this.peer.on('error', e => onError(e));
   },
