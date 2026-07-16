@@ -107,6 +107,11 @@
     border: 2px solid #fff; border-radius: 4px; display: none; z-index: 10;
   }
   #bowChargeFill { height: 100%; width: 0; background: linear-gradient(90deg, #ffd94a, #e33030); }
+  #oxygen {
+    position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%);
+    z-index: 10; display: none; font-size: 18px; letter-spacing: 2px;
+    text-shadow: 0 0 4px #000;
+  }
   #blind {
     position: fixed; inset: 0; background: #000; z-index: 15; display: none;
     align-items: center; justify-content: center; flex-direction: column; color: #fff; text-align: center;
@@ -282,6 +287,7 @@
 <div id="heartsMe" class="hearts"></div>
 <div id="heartsFoe" class="hearts"></div>
 <div id="bowCharge"><div id="bowChargeFill"></div></div>
+<div id="oxygen"></div>
 <div id="paintInfo"><span class="pc" id="paintSwatch"></span><span id="paintHint">Clic G : peindre &nbsp;|&nbsp; Clic D : pipette &nbsp;|&nbsp; Clic molette : tourner &nbsp;|&nbsp; Molette : zoom &nbsp;|&nbsp; P : sortir</span></div>
 <div id="paintCursor"></div>
 <div id="touchUI">
@@ -395,8 +401,7 @@ const TYPES = {
   glass:    { name: 'Vitre',  top: 0xa8dcf0, side: 0x9fd4ea },
   dark:     { name: 'Ardoise',top: 0x424956, side: 0x3a404c },
   pink:     { name: 'Rose',   top: 0xf097c0, side: 0xe888b5 },
-  water:    { name: 'Eau',    top: 0x3d6fd8, side: 0x3565c8 },
-  lava:     { name: 'Lave',   top: 0xe06010, side: 0xd05008 },
+  obsidian: { name: 'Obsidienne', top: 0x1c1130, side: 0x150c26 },
 };
 // Les blocs "décor" (murs, toits, vitres) servent aux bâtiments générés
 // et ne sont pas dans la barre d'inventaire.
@@ -702,8 +707,7 @@ const BLOCK_KINDS = {
   glass:    { top: 'glass', side: 'glass' },
   dark:     { top: 'plain', side: 'plain' },
   pink:     { top: 'plain', side: 'plain' },
-  water:    { top: 'water', side: 'water' },
-  lava:     { top: 'lava',  side: 'lava' },
+  obsidian: { top: 'stone', side: 'stone' },
 };
 
 const geo = new THREE.BoxGeometry(1, 1, 1);
@@ -711,16 +715,8 @@ const NEIGHBORS = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
 const instanced = {};
 for (const t of Object.keys(TYPES)) {
   const c = TYPES[t];
-  // eau translucide ; lave auto-éclairée (elle brille même la nuit)
-  const mkMat = (base, kind) => {
-    const tex = makeBlockTexture(base, kind);
-    if (t === 'lava') return new THREE.MeshBasicMaterial({ map: tex });
-    const m = new THREE.MeshLambertMaterial({ map: tex });
-    if (t === 'water') { m.transparent = true; m.opacity = 0.75; }
-    return m;
-  };
-  const side = mkMat(c.side, BLOCK_KINDS[t].side);
-  const top = mkMat(c.top, BLOCK_KINDS[t].top);
+  const side = new THREE.MeshLambertMaterial({ map: makeBlockTexture(c.side, BLOCK_KINDS[t].side) });
+  const top = new THREE.MeshLambertMaterial({ map: makeBlockTexture(c.top, BLOCK_KINDS[t].top) });
   const mesh = new THREE.InstancedMesh(geo, [side, side, top, side, side, side], MAX_INSTANCES);
   mesh.count = 0;
   mesh.frustumCulled = false;
@@ -807,7 +803,268 @@ function applyEdit(k, type, fromNetwork) {
   queueRebuild();
   if (!fromNetwork) net.sendEdit(k, type);
   if (soloMode) queueSoloSave();
+  // les fluides voisins doivent recalculer leur écoulement
+  const [fx, fy, fz] = k.split(',').map(Number);
+  if (type !== null && fluids.has(k)) { fluids.delete(k); queueFluidRebuild(); }
+  scheduleFluidAround(fx, fy, fz);
 }
+
+// ---------- Fluides : eau et lave avec niveaux et écoulement ----------
+// Chaque cellule porte un niveau 1..7 (7 = source/plein). Une file de
+// ticks (indépendante du framerate) ne réévalue que les cellules touchées.
+const FLUID_MAX = 7;
+const FLUID_TICK_MS = 200;            // tick eau ; la lave n'agit qu'un tick sur 3
+const FLUID_DROP = { water: 1, lava: 2 }; // perte par bloc -> portée ~7 / ~3
+const fluids = new Map();             // key -> { t, lvl, src }
+const fluidQueue = new Set();
+
+function fluidAt(x, y, z) {
+  return fluids.get(key(Math.floor(x), Math.floor(y), Math.floor(z)));
+}
+function scheduleFluid(x, y, z) { fluidQueue.add(key(x, y, z)); }
+function scheduleFluidAround(x, y, z) {
+  scheduleFluid(x, y, z);
+  for (const [dx, dy, dz] of NEIGHBORS) scheduleFluid(x + dx, y + dy, z + dz);
+}
+
+// Maillages dédiés : eau translucide, lave opaque et auto-éclairée
+const fluidMeshes = {
+  water: new THREE.Mesh(new THREE.BufferGeometry(),
+    new THREE.MeshLambertMaterial({ color: 0x3d6fd8, transparent: true, opacity: 0.72, depthWrite: false, side: THREE.DoubleSide })),
+  lava: new THREE.Mesh(new THREE.BufferGeometry(),
+    new THREE.MeshBasicMaterial({ color: 0xe0600f, side: THREE.DoubleSide })),
+};
+fluidMeshes.water.renderOrder = 2;
+for (const m of Object.values(fluidMeshes)) { m.frustumCulled = false; scene.add(m); }
+
+let fluidRebuildQueued = false;
+function queueFluidRebuild() {
+  if (!fluidRebuildQueued) { fluidRebuildQueued = true; setTimeout(rebuildFluids, 0); }
+}
+function levelHeight(f) { return (f.src || f.lvl >= FLUID_MAX) ? 0.88 : 0.16 + f.lvl * 0.1; }
+
+// Rendu : face du dessus en PENTE (hauteur interpolée aux 4 coins selon
+// les voisins), colonne pleine en chute, culling des faces internes.
+function rebuildFluids() {
+  fluidRebuildQueued = false;
+  for (const type of ['water', 'lava']) {
+    const pos = [];
+    const quad = (a, b, c, d) => pos.push(...a, ...b, ...c, ...a, ...c, ...d);
+    for (const [k, f] of fluids) {
+      if (f.t !== type) continue;
+      const [x, y, z] = k.split(',').map(Number);
+      const above = fluids.get(key(x, y + 1, z));
+      const falling = above && above.t === type;
+      const cornerH = (cx, cz) => {
+        if (falling) return 1;
+        let h = levelHeight(f);
+        for (const [ox, oz] of [[cx - 1, cz - 1], [cx - 1, cz], [cx, cz - 1], [cx, cz]]) {
+          const nf = fluids.get(key(x + ox, y, z + oz));
+          if (!nf || nf.t !== type) continue;
+          const nAbove = fluids.get(key(x + ox, y + 1, z + oz));
+          if (nAbove && nAbove.t === type) return 1;
+          h = Math.max(h, levelHeight(nf));
+        }
+        return h;
+      };
+      const h00 = cornerH(0, 0), h10 = cornerH(1, 0), h01 = cornerH(0, 1), h11 = cornerH(1, 1);
+      if (!falling) {
+        quad([x, y + h00, z], [x + 1, y + h10, z], [x + 1, y + h11, z + 1], [x, y + h01, z + 1]);
+      }
+      const bk = key(x, y - 1, z);
+      if (!world.has(bk) && !fluids.has(bk)) {
+        quad([x, y, z], [x + 1, y, z], [x + 1, y, z + 1], [x, y, z + 1]);
+      }
+      const sameFluid = (nx, nz) => { const nf = fluids.get(key(nx, y, nz)); return nf && nf.t === type; };
+      if (!world.has(key(x, y, z - 1)) && !sameFluid(x, z - 1))
+        quad([x, y, z], [x + 1, y, z], [x + 1, y + h10, z], [x, y + h00, z]);
+      if (!world.has(key(x, y, z + 1)) && !sameFluid(x, z + 1))
+        quad([x, y, z + 1], [x + 1, y, z + 1], [x + 1, y + h11, z + 1], [x, y + h01, z + 1]);
+      if (!world.has(key(x - 1, y, z)) && !sameFluid(x - 1, z))
+        quad([x, y, z], [x, y, z + 1], [x, y + h01, z + 1], [x, y + h00, z]);
+      if (!world.has(key(x + 1, y, z)) && !sameFluid(x + 1, z))
+        quad([x + 1, y, z], [x + 1, y, z + 1], [x + 1, y + h11, z + 1], [x + 1, y + h10, z]);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.computeVertexNormals();
+    fluidMeshes[type].geometry.dispose();
+    fluidMeshes[type].geometry = g;
+  }
+}
+
+// Simulation : descend en priorité, sinon s'étale vers le trou le plus
+// proche ; se tarit niveau par niveau si l'alimentation disparait.
+function evalFluid(k, f) {
+  const [x, y, z] = k.split(',').map(Number);
+  const type = f.t, drop = FLUID_DROP[type];
+  let changed = false;
+
+  // lave au contact de l'eau -> obsidienne (source) ou pierre (coulée)
+  if (type === 'lava') {
+    for (const [dx, dy, dz] of NEIGHBORS) {
+      const nf = fluids.get(key(x + dx, y + dy, z + dz));
+      if (nf && nf.t === 'water') {
+        fluids.delete(k);
+        applyEdit(k, f.src ? 'obsidian' : 'stone', true);
+        return true;
+      }
+    }
+  }
+
+  if (!f.src) {
+    // alimentation : fluide au-dessus ou voisin de niveau supérieur
+    const above = fluids.get(key(x, y + 1, z));
+    let expected = (above && above.t === type) ? FLUID_MAX : 0;
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nf = fluids.get(key(x + dx, y, z + dz));
+      if (nf && nf.t === type) expected = Math.max(expected, nf.lvl - drop);
+    }
+    if (expected < f.lvl) {
+      f.lvl--; // tarissement progressif
+      changed = true;
+      scheduleFluidAround(x, y, z);
+      if (f.lvl <= 0) { fluids.delete(k); return true; }
+    } else if (expected > f.lvl) {
+      f.lvl = expected;
+      changed = true;
+      scheduleFluidAround(x, y, z);
+    }
+    // puits infini : 2 sources d'eau adjacentes -> nouvelle source
+    if (type === 'water') {
+      let n = 0;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nf = fluids.get(key(x + dx, y, z + dz));
+        if (nf && nf.t === 'water' && nf.src) n++;
+      }
+      if (n >= 2) { f.src = true; f.lvl = FLUID_MAX; changed = true; scheduleFluidAround(x, y, z); }
+    }
+  }
+
+  // écoulement vertical prioritaire (et pas d'étalement pendant la chute)
+  const bk = key(x, y - 1, z);
+  if (y > -8 && !world.has(bk)) {
+    const bf = fluids.get(bk);
+    if (bf && bf.t !== type) { // rencontre eau/lave a la verticale
+      fluids.delete(bk);
+      applyEdit(bk, 'stone', true);
+      return true;
+    }
+    if (!bf) {
+      fluids.set(bk, { t: type, lvl: FLUID_MAX, src: false });
+      scheduleFluidAround(x, y - 1, z);
+      return true;
+    }
+    return changed;
+  }
+
+  // étalement latéral, en privilégiant le trou le plus proche (rayon 4)
+  const nl = f.lvl - drop;
+  if (nl >= 1) {
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    const dist = dirs.map(([dx, dz]) => {
+      for (let i = 1; i <= 4; i++) {
+        const cx = x + dx * i, cz = z + dz * i;
+        if (world.has(key(cx, y, cz))) return Infinity;
+        if (!world.has(key(cx, y - 1, cz)) && !fluids.has(key(cx, y - 1, cz))) return i;
+      }
+      return Infinity;
+    });
+    const best = Math.min(...dist);
+    dirs.forEach(([dx, dz], i) => {
+      if (best !== Infinity && dist[i] > best) return;
+      const nk = key(x + dx, y, z + dz);
+      if (world.has(nk)) return;
+      const nf = fluids.get(nk);
+      if (nf) {
+        if (nf.t !== type) { // rencontre latérale eau/lave
+          fluids.delete(nk);
+          applyEdit(nk, 'stone', true);
+          changed = true;
+        } else if (nf.lvl < nl) {
+          nf.lvl = nl;
+          scheduleFluidAround(x + dx, y, z + dz);
+          changed = true;
+        }
+      } else {
+        fluids.set(nk, { t: type, lvl: nl, src: false });
+        scheduleFluidAround(x + dx, y, z + dz);
+        changed = true;
+      }
+    });
+  }
+  return changed;
+}
+
+// ---------- Effets des fluides sur le joueur ----------
+// Eau : nage, oxygène quand la tête est immergée. Lave : dégâts continus
+// et feu persistant. Hors Battle (pas de PV), trop de dégâts = respawn.
+const oxygenEl = document.getElementById('oxygen');
+let oxygen = 10, selfPain = 0, burnUntil = 0, lastHurtWhy = '';
+
+function hurtSelf(hp, why) {
+  lastHurtWhy = why;
+  vignetteFlashUntil = performance.now() + 350;
+  sfx.hit();
+  if (game.mode === 'battle' && battleActive()) {
+    applyBattleHit(myId(), hp, false, true);
+    return;
+  }
+  selfPain += hp;
+  if (selfPain >= 10) {
+    selfPain = 0;
+    player.pos.set(0.5, heightAt(0, 0) + 3, 0.5);
+    player.vel.set(0, 0, 0);
+    showNotif(why, 3000);
+    sfx.dead();
+  }
+}
+
+setInterval(() => {
+  if (!locked) return;
+  const s = myScale();
+  const headF = fluidAt(player.pos.x, player.pos.y + (PLAYER_H - 0.2) * s, player.pos.z);
+  const bodyF = fluidAt(player.pos.x, player.pos.y + 0.3, player.pos.z);
+
+  // oxygène : ~15 s de réserve, se recharge vite hors de l'eau
+  if (headF && headF.t === 'water') {
+    oxygen = Math.max(0, oxygen - 0.34);
+    if (oxygen <= 0) hurtSelf(1, '🫧 Tu t\'es noyé !');
+  } else {
+    oxygen = Math.min(10, oxygen + 1);
+  }
+  const bubbles = Math.ceil(oxygen);
+  oxygenEl.style.display = bubbles < 10 ? 'block' : 'none';
+  oxygenEl.textContent = '🫧'.repeat(Math.max(0, bubbles));
+
+  // lave : dégâts continus + met le feu (3 s après en être sorti)
+  if (bodyF && bodyF.t === 'lava') {
+    burnUntil = Date.now() + 3000;
+    hurtSelf(2, '🔥 Tu as brûlé dans la lave !');
+  } else if (Date.now() < burnUntil) {
+    hurtSelf(1, '🔥 Tu as brûlé !');
+  } else if (selfPain > 0) {
+    selfPain = Math.max(0, selfPain - 1); // on récupère a l'abri
+  }
+}, 500);
+
+let fluidTickN = 0;
+setInterval(() => {
+  fluidTickN++;
+  const lavaTurn = fluidTickN % 3 === 0; // la lave coule 3x plus lentement
+  const todo = [...fluidQueue];
+  fluidQueue.clear();
+  let changed = false;
+  let budget = 600; // on ne traite que les cellules concernées, avec un plafond
+  for (const k of todo) {
+    const f = fluids.get(k);
+    if (!f) continue;
+    if (f.t === 'lava' && !lavaTurn) { fluidQueue.add(k); continue; }
+    if (budget-- <= 0) { fluidQueue.add(k); continue; }
+    if (evalFluid(k, f)) changed = true;
+  }
+  if (changed) queueFluidRebuild();
+}, FLUID_TICK_MS);
 
 // En solo, les constructions sont sauvegardées dans le navigateur
 let soloSaveTimer = null;
@@ -889,14 +1146,16 @@ function carvePool(cx, cz, type, r) {
       if (dx * dx + dz * dz > r * r + ihash(cx + dx, cz + dz, 42) * 2.5) continue;
       const wx = cx + dx, wz = cz + dz;
       for (let y = hc; y <= hc + 7; y++) world.delete(key(wx, y, wz));
-      world.set(key(wx, hc, wz), type);
       world.set(key(wx, hc - 1, wz), 'dirt'); // fond du bassin
+      fluids.set(key(wx, hc, wz), { t: type, lvl: FLUID_MAX, src: true }); // blocs SOURCE
     }
   }
 }
 
 function generateWorld() {
   world.clear();
+  fluids.clear();
+  fluidQueue.clear();
   const half = WORLD / 2;
   for (let x = -half; x < half; x++) {
     for (let z = -half; z < half; z++) {
@@ -958,6 +1217,13 @@ function generateWorld() {
     if (t === null) world.delete(k);
     else world.set(k, t);
   }
+
+  // fluides : retire ceux écrasés par un bloc, réveille les autres
+  for (const k of [...fluids.keys()]) {
+    if (world.has(k)) fluids.delete(k);
+    else fluidQueue.add(k);
+  }
+  queueFluidRebuild();
 
   resetFireflies();
 
@@ -2464,8 +2730,8 @@ const player = {
 };
 
 function isSolid(x, y, z) {
-  const t = world.get(key(Math.floor(x), Math.floor(y), Math.floor(z)));
-  return t !== undefined && t !== 'water' && t !== 'lava'; // on entre dans les liquides
+  // les fluides ont leur propre systeme (fluids) : ils ne sont pas solides
+  return world.has(key(Math.floor(x), Math.floor(y), Math.floor(z)));
 }
 function collide(pos) {
   const s = myScale();
@@ -3137,6 +3403,8 @@ const prevPos = player.pos.clone();
 // spectateur : si quelqu'un creuse sous lui, il tombe quand même.
 // canControl = le joueur peut se déplacer (pointer lock actif, pas figé).
 function stepPhysics(dt, canControl) {
+  // fluide au niveau du corps : ralentit, permet de nager
+  const inFluid = fluidAt(player.pos.x, player.pos.y + 0.3, player.pos.z);
   const move = new THREE.Vector3();
   if (canControl) {
     const B = settings.binds;
@@ -3153,13 +3421,18 @@ function stepPhysics(dt, canControl) {
       move.add(right.clone().multiplyScalar(touchMove.x));
     }
     const sprintDown = keys[B.sprint] || touchSprint || (B.sprint.startsWith('Shift') && (keys['ShiftLeft'] || keys['ShiftRight']));
-    if (move.lengthSq() > 0) move.normalize().multiplyScalar(SPEED * (sprintDown ? SPRINT_MULT : 1));
-    if ((keys[B.jump] || touchJumpQueued) && player.onGround) { player.vel.y = JUMP; player.onGround = false; }
+    const fluidSlow = inFluid ? (inFluid.t === 'lava' ? 0.35 : 0.55) : 1;
+    if (move.lengthSq() > 0) move.normalize().multiplyScalar(SPEED * (sprintDown ? SPRINT_MULT : 1) * fluidSlow);
+    if (keys[B.jump] || touchJumpQueued) {
+      if (inFluid) player.vel.y = inFluid.t === 'water' ? 3.4 : 2.2; // nage / se hisse
+      else if (player.onGround) { player.vel.y = JUMP; player.onGround = false; }
+    }
   }
   touchJumpQueued = false;
   player.vel.x = move.x;
   player.vel.z = move.z;
-  player.vel.y -= GRAVITY * dt;
+  player.vel.y -= GRAVITY * dt * (inFluid ? 0.3 : 1);
+  if (inFluid && player.vel.y < -3) player.vel.y = -3; // on coule doucement
 
   const p = player.pos;
   const test = p.clone();
