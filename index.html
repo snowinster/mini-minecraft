@@ -349,6 +349,7 @@
         <div class="rItem"><div class="rIcon">🎨</div><div><b>Peinture camouflage</b> : <kbd>C</kbd> bascule la vue 1re/3e personne (les cachés démarrent en 3e personne). <kbd>P</kbd> ouvre l'atelier : souris = pinceau, clic droit = pipette au pixel près sur les blocs, clic gauche = peindre, clic molette maintenu = tourner autour du perso, molette = zoom. Fonds-toi dans le décor !</div></div>
         <div class="rItem"><div class="rIcon">⭐</div><div><b>Points</b> : reste a moins de 20 blocs du chasseur sans te faire voir pour gagner des points de discrétion.</div></div>
         <div class="rItem"><div class="rIcon">🫀</div><div><b>Tension</b> : ton écran rougit et ton cœur bat quand le chasseur approche. <kbd>V</kbd> : voir la vue du chasseur (cachés / éliminés).</div></div>
+        <div class="rItem"><div class="rIcon">🐷</div><div><b>Animaux (solo)</b> : cochons, vaches et poules errent sur la grande map. Tiens de l'<b>Herbe</b> (cochon/vache) ou de la <b>Feuille</b> (poule) en main pour les attirer, clic droit pour les nourrir : deux adultes nourris font un bébé ! Les poules pondent des œufs et tombent en douceur. Clic gauche = les frapper (ils paniquent).</div></div>
         <div class="rItem"><div class="rIcon">⚔️</div><div><b>Battle 1v1</b> : duel a l'arc a exactement 2 joueurs, premier a 3 manches. 10 cœurs chacun. Maintiens le clic pour bander l'arc (1 s = pleine charge), relâche pour tirer : la flèche a un temps de vol et retombe, anticipe ! Dégâts selon la charge (1 a 2,5 cœurs), <b>headshot = dégâts x2</b>. Brève invincibilité après chaque impact.</div></div>
       </div>
       <button class="btn gray" id="rulesBack">← RETOUR</button>
@@ -1100,6 +1101,331 @@ function saveSoloPos() {
 setInterval(() => { if (soloMode) saveSoloPos(); }, 3000);
 addEventListener('beforeunload', () => { if (soloMode) { saveSoloEdits(); saveSoloPos(); } });
 
+// ---------- Mobs passifs : cochons, vaches et poules (mode solo) ----------
+// Entités hors grille : position flottante, AABB, gravité, glissement le
+// long des murs, auto-saut d'un bloc, PV/knockback/clignotement, IA a
+// priorités (panique > amour > suivre la nourriture > bébé suit > errance).
+const MOB_SPECS = {
+  pig:     { hp: 10, w: 0.9, h: 0.9, speed: 1.5, food: 'grass', label: 'Cochon' },
+  cow:     { hp: 10, w: 0.9, h: 1.4, speed: 1.3, food: 'grass', label: 'Vache' },
+  chicken: { hp: 4,  w: 0.4, h: 0.7, speed: 1.7, food: 'leaf',  label: 'Poule' },
+};
+const mobs = [];
+const mobDrops = []; // œufs pondus (décoratifs)
+
+function mobMat(color) { return new THREE.MeshLambertMaterial({ color }); }
+
+function makeMobMesh(type) {
+  const g = new THREE.Group();
+  const refs = { legs: [], wings: [] };
+  const leg = (mat, lx, ly, lz, w, len) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(lx, ly, lz);
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, len, w), mat);
+    mesh.position.y = -len / 2;
+    pivot.add(mesh);
+    g.add(pivot);
+    refs.legs.push(pivot);
+  };
+  if (type === 'pig') {
+    const pink = mobMat(0xf0a3aa);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.45, 0.9), pink);
+    body.position.y = 0.5;
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.35), pink);
+    head.position.set(0, 0.58, -0.58);
+    const snout = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.12, 0.06), mobMat(0xd87f8a));
+    snout.position.set(0, -0.06, -0.2);
+    head.add(snout);
+    g.add(body, head);
+    refs.head = head;
+    for (const [lx, lz] of [[-0.18, -0.3], [0.18, -0.3], [-0.18, 0.3], [0.18, 0.3]]) leg(pink, lx, 0.3, lz, 0.16, 0.3);
+  } else if (type === 'cow') {
+    const brown = mobMat(0x5f4023);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.55, 1.0), brown);
+    body.position.y = 0.95;
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.42, 0.35), brown);
+    head.position.set(0, 1.18, -0.62);
+    const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.16, 0.06), mobMat(0xd8d0c0));
+    muzzle.position.set(0, -0.12, -0.2);
+    head.add(muzzle);
+    for (const hx of [-0.16, 0.16]) {
+      const horn = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.12, 0.06), mobMat(0xe8e0d0));
+      horn.position.set(hx, 0.25, -0.05);
+      head.add(horn);
+    }
+    g.add(body, head);
+    refs.head = head;
+    for (const [lx, lz] of [[-0.2, -0.35], [0.2, -0.35], [-0.2, 0.35], [0.2, 0.35]]) leg(brown, lx, 0.68, lz, 0.18, 0.62);
+  } else { // poule
+    const white = mobMat(0xf2f2ec);
+    const yellow = mobMat(0xe8b830);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.3, 0.42), white);
+    body.position.y = 0.42;
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.26, 0.18), white);
+    head.position.set(0, 0.68, -0.2);
+    const beak = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.06, 0.08), yellow);
+    beak.position.set(0, 0, -0.13);
+    head.add(beak);
+    const wattle = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.08, 0.05), mobMat(0xd03030));
+    wattle.position.set(0, -0.09, -0.12);
+    head.add(wattle);
+    g.add(body, head);
+    refs.head = head;
+    for (const lx of [-0.08, 0.08]) leg(yellow, lx, 0.27, 0.05, 0.05, 0.27);
+    for (const wx of [-0.19, 0.19]) {
+      const pivot = new THREE.Group();
+      pivot.position.set(wx, 0.55, 0);
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.2, 0.34), white);
+      wing.position.y = -0.1;
+      pivot.add(wing);
+      g.add(pivot);
+      refs.wings.push(pivot);
+    }
+  }
+  g.userData = refs;
+  return g;
+}
+
+function groundY(x, z) {
+  for (let y = 40; y > -5; y--) if (world.has(key(Math.floor(x), y, Math.floor(z)))) return y + 1;
+  return null;
+}
+
+function spawnMob(type, x, z, baby) {
+  const spec = MOB_SPECS[type];
+  const y = groundY(x, z);
+  if (y === null) return null;
+  const m = {
+    type, spec, baby: !!baby,
+    pos: new THREE.Vector3(x, y, z),
+    vel: new THREE.Vector3(),
+    yaw: Math.random() * Math.PI * 2,
+    hp: spec.hp,
+    state: 'idle', stateUntil: 0, dest: null,
+    loveUntil: 0, breedAfter: 0,
+    growAt: baby ? Date.now() + 20 * 60000 : 0, // adulte en ~20 min
+    hurtUntil: 0, invulnUntil: 0, deadAt: 0, flap: false,
+    eggAt: type === 'chicken' ? Date.now() + (300 + Math.random() * 300) * 1000 : 0,
+    onGround: false, walkPhase: 0,
+    mesh: makeMobMesh(type),
+  };
+  if (m.baby) { m.mesh.scale.setScalar(0.55); m.mesh.userData.head.scale.setScalar(1.5); } // bébé : grosse tête
+  m.mesh.userData.mob = m;
+  scene.add(m.mesh);
+  mobs.push(m);
+  return m;
+}
+
+function clearMobs() {
+  for (const m of mobs) scene.remove(m.mesh);
+  mobs.length = 0;
+  for (const d of mobDrops) scene.remove(d.mesh);
+  mobDrops.length = 0;
+}
+
+function spawnMobs() {
+  if (!soloMode) return; // pas de synchronisation réseau des mobs (multi)
+  const half = WORLD / 2 - 6;
+  for (const type of ['pig', 'cow', 'chicken', 'pig', 'cow', 'chicken']) {
+    const cx = (Math.random() - 0.5) * 2 * half, cz = (Math.random() - 0.5) * 2 * half;
+    const n = 3 + Math.floor(Math.random() * 2); // petits groupes
+    for (let i = 0; i < n; i++) {
+      if (mobs.length >= 26) return; // plafond global
+      spawnMob(type, cx + (Math.random() - 0.5) * 4, cz + (Math.random() - 0.5) * 4);
+    }
+  }
+}
+
+function hurtMob(m, dmg, from) {
+  if (m.deadAt || Date.now() < m.invulnUntil) return;
+  m.hp -= dmg;
+  m.invulnUntil = Date.now() + 400; // brève invulnérabilité
+  m.hurtUntil = Date.now() + 300;   // clignote rouge
+  const dx = m.pos.x - from.x, dz = m.pos.z - from.z;
+  const d = Math.hypot(dx, dz) || 1;
+  m.vel.x += (dx / d) * 5; // knockback
+  m.vel.z += (dz / d) * 5;
+  m.vel.y = 4;
+  m.state = 'panic';
+  m.stateUntil = Date.now() + 4000;
+  m.dest = null;
+  sfx.hit();
+  if (m.hp <= 0) m.deadAt = performance.now();
+}
+
+// destination d'errance qui refuse les chutes > 3 blocs et les fluides
+function safeDest(m, r) {
+  for (let tries = 0; tries < 6; tries++) {
+    const x = m.pos.x + (Math.random() - 0.5) * 2 * r;
+    const z = m.pos.z + (Math.random() - 0.5) * 2 * r;
+    const gy = groundY(x, z);
+    if (gy === null) continue;
+    if (m.pos.y - gy > 3) continue;
+    if (fluidAt(x, gy + 0.2, z)) continue;
+    return { x, z };
+  }
+  return null;
+}
+
+function mobCollide(m, px, py, pz) {
+  const s = m.baby ? 0.55 : 1;
+  const r = m.spec.w / 2 * s, h = m.spec.h * s;
+  for (const dx of [-r, r]) for (const dz of [-r, r]) for (const dy of [0.05, h * 0.5, h - 0.05]) {
+    if (isSolid(px + dx, py + dy, pz + dz)) return true;
+  }
+  return false;
+}
+
+// physique + animations, appelé a chaque image
+function updateMobs(dt, now) {
+  for (let i = mobs.length - 1; i >= 0; i--) {
+    const m = mobs[i];
+    if (m.deadAt) { // bascule sur le côté puis disparait
+      const t = (now - m.deadAt) / 500;
+      m.mesh.rotation.z = Math.min(1, t) * Math.PI / 2;
+      if (t > 1.6) {
+        spawnImpactBurst(m.pos.clone().add(new THREE.Vector3(0, 0.4, 0)), m.type === 'chicken' ? 0xf2f2ec : 0xc06040, 8);
+        scene.remove(m.mesh);
+        mobs.splice(i, 1);
+      }
+      continue;
+    }
+    if (m.baby && Date.now() > m.growAt) {
+      m.baby = false;
+      m.mesh.scale.setScalar(1);
+      m.mesh.userData.head.scale.setScalar(1);
+    }
+    const fl = fluidAt(m.pos.x, m.pos.y + 0.2, m.pos.z);
+    // vers la destination
+    let mvx = 0, mvz = 0;
+    if (m.dest) {
+      const dx = m.dest.x - m.pos.x, dz = m.dest.z - m.pos.z;
+      const d = Math.hypot(dx, dz);
+      if (d < 0.4) m.dest = null;
+      else {
+        let sp = m.spec.speed * (m.state === 'panic' ? 1.9 : (m.state === 'follow' || m.state === 'love') ? 1.4 : 0.7);
+        if (m.baby) sp *= 1.3;
+        if (fl) sp *= 0.5;
+        mvx = dx / d * sp;
+        mvz = dz / d * sp;
+        const targetYaw = Math.atan2(-mvx, -mvz);
+        let dy = targetYaw - m.yaw;
+        while (dy > Math.PI) dy -= 2 * Math.PI;
+        while (dy < -Math.PI) dy += 2 * Math.PI;
+        m.yaw += dy * Math.min(1, dt * 6);
+      }
+    }
+    m.vel.x = mvx;
+    m.vel.z = mvz;
+    if (fl && fl.t === 'water') m.vel.y = Math.min(m.vel.y + 24 * dt, 2); // flotte
+    else m.vel.y -= GRAVITY * dt * (fl ? 0.3 : 1);
+    m.flap = false;
+    if (m.type === 'chicken' && m.vel.y < -2) { m.vel.y = -2; m.flap = true; } // chute lente
+    // intégration axe par axe (glisse le long des murs)
+    const p = m.pos;
+    let blocked = false;
+    if (!mobCollide(m, p.x + m.vel.x * dt, p.y, p.z)) p.x += m.vel.x * dt; else blocked = true;
+    if (!mobCollide(m, p.x, p.y, p.z + m.vel.z * dt)) p.z += m.vel.z * dt; else blocked = true;
+    if (!mobCollide(m, p.x, p.y + m.vel.y * dt, p.z)) { p.y += m.vel.y * dt; m.onGround = false; }
+    else { if (m.vel.y < 0) m.onGround = true; m.vel.y = 0; }
+    if (blocked && m.onGround && (mvx || mvz)) {
+      // auto-saut d'un bloc d'obstacle
+      if (!mobCollide(m, p.x + Math.sign(mvx) * 0.4, p.y + 1.05, p.z + Math.sign(mvz) * 0.4)) m.vel.y = 7.5;
+    }
+    if (p.y < -20) { scene.remove(m.mesh); mobs.splice(i, 1); continue; }
+    // rendu + animation de marche (pattes en opposition, ailes en chute)
+    m.mesh.position.copy(p);
+    m.mesh.rotation.y = m.yaw;
+    m.mesh.rotation.z = 0;
+    const hspd = Math.hypot(m.vel.x, m.vel.z);
+    if (hspd > 0.05) m.walkPhase += dt * (4 + hspd * 5);
+    const swing = Math.sin(m.walkPhase) * Math.min(1, hspd / 2) * 0.8;
+    const refs = m.mesh.userData;
+    refs.legs.forEach((l, j) => l.rotation.x = j % 2 ? swing : -swing);
+    refs.wings.forEach((w, j) => w.rotation.z = m.flap ? Math.sin(now * 0.03) * 0.9 * (j ? -1 : 1) : 0);
+    // la tête suit le joueur proche, avec limite d'angle
+    if (refs.head) {
+      let hy = 0;
+      if (Math.hypot(player.pos.x - p.x, player.pos.z - p.z) < 5) {
+        const want = Math.atan2(-(player.pos.x - p.x), -(player.pos.z - p.z)) - m.yaw;
+        hy = Math.max(-1.1, Math.min(1.1, Math.atan2(Math.sin(want), Math.cos(want))));
+      }
+      refs.head.rotation.y += (hy - refs.head.rotation.y) * Math.min(1, dt * 8);
+    }
+    // clignotement rouge quand blessé
+    const hurt = Date.now() < m.hurtUntil;
+    m.mesh.traverse(o => { if (o.isMesh && o.material.emissive) o.material.emissive.setHex(hurt ? 0x881111 : 0x000000); });
+    // ponte (toutes les 5 a 10 minutes)
+    if (m.eggAt && Date.now() > m.eggAt && m.onGround) {
+      m.eggAt = Date.now() + (300 + Math.random() * 300) * 1000;
+      const egg = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.18, 0.14), mobMat(0xf5efdc));
+      egg.position.set(p.x, p.y + 0.09, p.z);
+      scene.add(egg);
+      mobDrops.push({ mesh: egg, until: Date.now() + 30000 });
+    }
+  }
+  for (let i = mobDrops.length - 1; i >= 0; i--) {
+    if (Date.now() > mobDrops[i].until) { scene.remove(mobDrops[i].mesh); mobDrops.splice(i, 1); }
+  }
+}
+
+// IA a tick fixe (indépendant du framerate), allégée pour les mobs loin
+let mobTickN = 0;
+setInterval(() => {
+  mobTickN++;
+  const now = Date.now();
+  for (const m of mobs) {
+    if (m.deadAt) continue;
+    const distP = Math.hypot(player.pos.x - m.pos.x, player.pos.z - m.pos.z);
+    if (distP > 40 && mobTickN % 4) continue; // tick réduit au loin
+    // 1. panique
+    if (m.state === 'panic') {
+      if (now > m.stateUntil) { m.state = 'idle'; m.dest = null; }
+      else if (!m.dest) m.dest = safeDest(m, 8);
+      continue;
+    }
+    // 2. amour : rejoindre un partenaire, bébé au contact
+    if (now < m.loveUntil) {
+      m.state = 'love';
+      if (mobTickN % 4 === 0) spawnImpactBurst(m.pos.clone().add(new THREE.Vector3(0, m.spec.h + 0.3, 0)), 0xff6090, 1);
+      const mate = mobs.find(o => o !== m && o.type === m.type && !o.baby && now < o.loveUntil && !o.deadAt);
+      if (mate) {
+        m.dest = { x: mate.pos.x, z: mate.pos.z };
+        if (Math.hypot(mate.pos.x - m.pos.x, mate.pos.z - m.pos.z) < 1.1) {
+          m.loveUntil = 0;
+          mate.loveUntil = 0;
+          m.breedAfter = now + 300000; // 5 min de cooldown
+          mate.breedAfter = now + 300000;
+          spawnMob(m.type, m.pos.x, m.pos.z, true);
+          spawnImpactBurst(m.pos.clone().add(new THREE.Vector3(0, 1, 0)), 0xff6090, 12);
+          sfx.convert();
+        }
+      }
+      continue;
+    }
+    // 3. suivre le joueur qui tient sa nourriture (rayon 10)
+    if (soloMode && game.mode === 'free' && distP < 10 && PLACEABLE[selected] === m.spec.food) {
+      m.state = 'follow';
+      m.dest = { x: player.pos.x, z: player.pos.z };
+      continue;
+    }
+    if (m.state === 'follow') { m.state = 'idle'; m.dest = null; }
+    // 4. bébé : suit un adulte de son espèce
+    if (m.baby) {
+      const parent = mobs.find(o => o.type === m.type && !o.baby && !o.deadAt);
+      if (parent && Math.hypot(parent.pos.x - m.pos.x, parent.pos.z - m.pos.z) > 3) {
+        m.dest = { x: parent.pos.x, z: parent.pos.z };
+        continue;
+      }
+    }
+    // 5. errance : destination proche, lentement, avec pauses
+    if (!m.dest && now > m.stateUntil && Math.random() < 0.25) {
+      m.dest = safeDest(m, 5);
+      m.stateUntil = now + 2000 + Math.random() * 4000;
+    }
+  }
+}, 300);
+
 // ---------- Génération 100% déterministe ----------
 // Hash en arithmétique ENTIÈRE : résultat identique sur tous les
 // navigateurs et processeurs (Math.sin variait légèrement -> maps
@@ -1170,6 +1496,7 @@ function generateWorld() {
   world.clear();
   fluids.clear();
   fluidQueue.clear();
+  clearMobs();
   const half = WORLD / 2;
   for (let x = -half; x < half; x++) {
     for (let z = -half; z < half; z++) {
@@ -1240,6 +1567,7 @@ function generateWorld() {
   queueFluidRebuild();
 
   resetFireflies();
+  spawnMobs();
 
   // Fleurs sur les blocs d'herbe libres
   decorGroup.clear();
@@ -3368,6 +3696,27 @@ document.addEventListener('mousedown', e => {
     return;
   }
 
+  // Mobs : clic gauche = coup de poing, clic droit avec sa nourriture = nourrir
+  if (mobs.length) {
+    paintRaycaster.setFromCamera({ x: 0, y: 0 }, camera);
+    const mHits = paintRaycaster.intersectObjects(mobs.filter(mm => !mm.deadAt).map(mm => mm.mesh), true);
+    if (mHits.length && mHits[0].distance < 3.5) {
+      let o = mHits[0].object;
+      while (o && !(o.userData && o.userData.mob)) o = o.parent;
+      const m = o && o.userData.mob;
+      if (m) {
+        if (e.button === 0) {
+          hurtMob(m, 2, player.pos);
+        } else if (e.button === 2 && !m.baby && PLACEABLE[selected] === m.spec.food && Date.now() > m.breedAfter) {
+          m.loveUntil = Date.now() + 30000;
+          spawnImpactBurst(m.pos.clone().add(new THREE.Vector3(0, m.spec.h + 0.3, 0)), 0xff6090, 6);
+          showNotif('❤️ ' + m.spec.label + ' nourri(e) ! Nourris-en un 2e...', 2000);
+        }
+        return;
+      }
+    }
+  }
+
   const hit = raycastVoxel(REACH, thirdPerson ? headPos() : null);
   if (!hit) return;
 
@@ -3674,6 +4023,9 @@ function loop(now) {
   } else {
     radarEl.style.display = 'none';
   }
+
+  // Mobs (physique + animations)
+  updateMobs(dt, now);
 
   // Battle 1v1 : flèches en vol + arc 3D en main + barre de charge
   updateArrows(dt);
