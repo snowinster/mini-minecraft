@@ -3599,10 +3599,8 @@ if (IS_TOUCH) {
     if (!hit) return;
     if (place) {
       const nx = hit.x + hit.face[0], ny = hit.y + hit.face[1], nz = hit.z + hit.face[2];
-      const p = player.pos;
-      const inPlayer = Math.floor(p.x) === nx && Math.floor(p.z) === nz &&
-                       (Math.floor(p.y) === ny || Math.floor(p.y + 1) === ny);
-      if (!inPlayer) { applyEdit(key(nx, ny, nz), PLACEABLE[selected], false); sfx.place(); }
+      if (blockOverlapsEntity(nx, ny, nz)) showNotif('Impossible : quelqu\'un est la !', 1200);
+      else { applyEdit(key(nx, ny, nz), PLACEABLE[selected], false); sfx.place(); }
     } else {
       applyEdit(key(hit.x, hit.y, hit.z), null, false);
       sfx.break();
@@ -3667,6 +3665,26 @@ const hlBox = new THREE.LineSegments(
 hlBox.visible = false;
 scene.add(hlBox);
 
+// On ne peut pas poser un bloc qui chevauche une entité (soi-même, un
+// autre joueur ou un animal) : vrai test AABB, pas juste le centre.
+function blockOverlapsEntity(nx, ny, nz) {
+  const boxHit = (cx, cy, cz, r, h) =>
+    nx < cx + r && nx + 1 > cx - r &&
+    nz < cz + r && nz + 1 > cz - r &&
+    ny < cy + h && ny + 1 > cy;
+  if (boxHit(player.pos.x, player.pos.y, player.pos.z, 0.35, PLAYER_H * myScale())) return true;
+  for (const [, r] of remotePlayers) {
+    if (r.target.y < -50) continue;
+    if (boxHit(r.target.x, r.target.y, r.target.z, 0.4, 1.9)) return true;
+  }
+  for (const m of mobs) {
+    if (m.deadAt) continue;
+    const ms = m.baby ? 0.55 : 1;
+    if (boxHit(m.pos.x, m.pos.y, m.pos.z, m.spec.w / 2 * ms + 0.05, m.spec.h * ms)) return true;
+  }
+  return false;
+}
+
 document.addEventListener('mousedown', e => {
   if (!locked || game.dead || spectating) return;
   if (isHunter() && game.phase === 'hiding') return;
@@ -3725,10 +3743,9 @@ document.addEventListener('mousedown', e => {
     sfx.break();
   } else if (e.button === 2) {
     const nx = hit.x + hit.face[0], ny = hit.y + hit.face[1], nz = hit.z + hit.face[2];
-    const p = player.pos;
-    const inPlayer = Math.floor(p.x) === nx && Math.floor(p.z) === nz &&
-                     (Math.floor(p.y) === ny || Math.floor(p.y + 1) === ny);
-    if (!inPlayer) {
+    if (blockOverlapsEntity(nx, ny, nz)) {
+      showNotif('Impossible : quelqu\'un est la !', 1200);
+    } else {
       applyEdit(key(nx, ny, nz), PLACEABLE[selected], false);
       sfx.place();
     }
